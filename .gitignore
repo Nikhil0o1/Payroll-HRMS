@@ -1,0 +1,142 @@
+# =====================================================================
+#  Payroll & HRMS Platform — root .gitignore
+#  Monorepo: backend (Python / FastAPI) + frontend (Node / Vite + React)
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# Secrets & local config — NEVER commit
+# ---------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+_qa_tokens.json
+
+# ---------------------------------------------------------------------
+# Python (backend/)
+# ---------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging / build artifacts
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+.installed.cfg
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+nosetests.xml
+
+# ---------------------------------------------------------------------
+# Node / Vite / React (frontend/)
+# ---------------------------------------------------------------------
+node_modules/
+.pnpm-store/
+
+# Build output
+frontend/dist/
+frontend/build/
+
+# Vite & TypeScript caches
+.vite/
+*.tsbuildinfo
+
+# Package-manager debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ESLint / Prettier caches
+.eslintcache
+.stylelintcache
+
+# Optional lockfiles from non-default package managers
+# (keep package-lock.json — that's the one we use)
+yarn.lock
+pnpm-lock.yaml
+
+# ---------------------------------------------------------------------
+# Application data & generated artifacts
+# ---------------------------------------------------------------------
+# Local SQLite database (dev only — Postgres for prod)
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploaded files, payslip PDFs, report exports
+backend/storage/
+
+# Playwright QA captures (regenerable; canonical copies live in docs/screenshots/)
+frontend/.qa/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+logs/
+
+# ---------------------------------------------------------------------
+# Editors & IDEs
+# ---------------------------------------------------------------------
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*.swn
+*~
+
+# ---------------------------------------------------------------------
+# Operating systems
+# ---------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.Trash-*
+
+# ---------------------------------------------------------------------
+# Misc
+# ---------------------------------------------------------------------
+.cache/
+.tmp/
+tmp/
+*.bak
+*.orig

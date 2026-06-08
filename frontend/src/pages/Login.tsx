@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, apiErrorMessage } from "@/lib/api";
+import { useAuthPolicy, workEmailHint } from "@/lib/auth-policy";
 import { useAuthStore } from "@/stores/auth";
 import type { Tokens } from "@/types/api";
 
@@ -25,6 +26,10 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [showPassword, setShowPassword] = useState(false);
+
+  const policy = useAuthPolicy();
+  const allowedDomains = policy.data?.allowed_email_domains;
+  const emailHint = workEmailHint(allowedDomains);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -68,9 +73,21 @@ export function LoginPage() {
           <form className="mt-8 space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
             <div className="space-y-1.5">
               <Label htmlFor="email">Work email</Label>
-              <Input id="email" type="email" placeholder="you@company.com" autoComplete="email" {...form.register("email")} />
+              <Input
+                id="email"
+                type="email"
+                placeholder={
+                  allowedDomains && allowedDomains.length > 0
+                    ? `you@${allowedDomains[0]}`
+                    : "you@company.com"
+                }
+                autoComplete="email"
+                {...form.register("email")}
+              />
               {form.formState.errors.email ? (
                 <p className="text-xs text-destructive">{form.formState.errors.email.message}</p>
+              ) : emailHint ? (
+                <p className="text-xs text-muted-foreground">{emailHint}</p>
               ) : null}
             </div>
             <div className="space-y-1.5">

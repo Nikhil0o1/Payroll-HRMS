@@ -1,8 +1,13 @@
 """Import all models so SQLAlchemy's metadata + Alembic see every table."""
 from app.core.database import Base  # noqa: F401
+from app.models.announcement import Announcement  # noqa: F401
 from app.models.audit import AuditLog  # noqa: F401
 from app.models.attendance import AttendanceDaily, AttendanceLog  # noqa: F401
-from app.models.employee import Employee, EmployeeProfile  # noqa: F401
+from app.models.employee import (  # noqa: F401
+    Employee,
+    EmployeeBankDetailChangeRequest,
+    EmployeeProfile,
+)
 from app.models.holiday import Holiday  # noqa: F401
 from app.models.leave import LeaveBalance, LeaveRequest, LeaveType  # noqa: F401
 from app.models.payroll import (  # noqa: F401
@@ -12,6 +17,7 @@ from app.models.payroll import (  # noqa: F401
     SalaryStructure,
 )
 from app.models.regularization import RegularizationRequest  # noqa: F401
+from app.models.shift import Shift  # noqa: F401
 from app.models.user import RefreshToken, Role, User  # noqa: F401
 from app.models.organization import (
     OrganizationProfile,
@@ -22,10 +28,12 @@ from app.models.organization import (
 
 __all__ = [
     "Base",
+    "Announcement",
     "AuditLog",
     "AttendanceDaily",
     "AttendanceLog",
     "Employee",
+    "EmployeeBankDetailChangeRequest",
     "EmployeeProfile",
     "Holiday",
     "LeaveBalance",
@@ -36,6 +44,7 @@ __all__ = [
     "Payslip",
     "SalaryStructure",
     "RegularizationRequest",
+    "Shift",
     "RefreshToken",
     "Role",
     "User",

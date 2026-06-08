@@ -14,6 +14,7 @@ from app.core.deps import (
 )
 from app.models.user import User
 from app.schemas.payroll import (
+    ApplyTemplateRequest,
     SalaryStructureCreate,
     SalaryStructureOut,
     SalaryStructureUpdate,
@@ -52,6 +53,20 @@ def create(
     payload: SalaryStructureCreate, db: Session = Depends(get_db), current: User = Depends(require_hr)
 ):
     return SalaryStructureOut.model_validate(payroll_service.create_structure(db, payload, actor=current))
+
+
+@router.post("/apply-template", response_model=SalaryStructureOut, status_code=201)
+def apply_template(
+    payload: ApplyTemplateRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_hr),
+):
+    """Materialize a salary template into a versioned structure for the
+    given employee. Deactivates any currently-active structure (same versioning
+    semantics as ``POST /salary-structures``)."""
+    return SalaryStructureOut.model_validate(
+        payroll_service.apply_template_to_employee(db, payload, actor=current)
+    )
 
 
 @router.patch("/{structure_id}", response_model=SalaryStructureOut)

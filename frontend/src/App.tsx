@@ -21,10 +21,12 @@ import { NotFoundPage } from "@/pages/NotFound";
 import { SettingsLayout } from "@/pages/settings/SettingsLayout";
 import OrganisationProfile from "@/pages/settings/OrganisationProfile";
 import WorkLocations from "@/pages/settings/WorkLocations";
+import Shifts from "@/pages/settings/Shifts";
 import SalaryComponents from "@/pages/settings/SalaryComponents";
 import SalaryTemplates from "@/pages/settings/SalaryTemplates";
 import PaySchedule from "@/pages/settings/PaySchedule";
 import UsersRoles from "@/pages/settings/UsersRoles";
+import Announcements from "@/pages/settings/Announcements";
 
 export function App() {
   return (
@@ -115,9 +117,11 @@ export function App() {
           <Route index element={<Navigate to="organisation" replace />} />
           <Route path="organisation" element={<OrganisationProfile />} />
           <Route path="work-locations" element={<WorkLocations />} />
+          <Route path="shifts" element={<Shifts />} />
           <Route path="salary-components" element={<SalaryComponents />} />
           <Route path="salary-templates" element={<SalaryTemplates />} />
           <Route path="pay-schedule" element={<PaySchedule />} />
+          <Route path="announcements" element={<Announcements />} />
           <Route path="users-roles" element={<UsersRoles />} />
         </Route>
 

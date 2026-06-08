@@ -18,6 +18,7 @@ export type HolidayType = "PUBLIC" | "OPTIONAL";
 export type ComponentType = "EARNING" | "DEDUCTION";
 export type CalcType = "FIXED" | "PERCENT_OF_BASIC" | "PERCENT_OF_CTC";
 export type PayrollStatus = "DRAFT" | "REVIEW" | "APPROVED" | "LOCKED";
+export type BankDetailChangeStatus = "PENDING" | "APPROVED" | "REJECTED";
 
 export interface Page<T> {
   items: T[];
@@ -35,6 +36,7 @@ export interface MeEmployee {
   work_email: string;
   department?: string | null;
   designation?: string | null;
+  photo_url?: string | null;
 }
 
 export interface Me {
@@ -49,6 +51,36 @@ export interface Me {
 export interface Tokens {
   access_token: string;
   refresh_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+export interface AuthPolicy {
+  /** Empty list = no domain restriction in effect. */
+  allowed_email_domains: string[];
+}
+
+export type NotificationSeverity = "info" | "success" | "warning";
+
+export interface AppNotification {
+  id: string;
+  kind: string;
+  severity: NotificationSeverity;
+  title: string;
+  description: string;
+  href?: string | null;
+  /** ISO timestamp of when the underlying event happened. */
+  timestamp: string;
+  actor?: string | null;
+}
+
+export interface NotificationsResponse {
+  items: AppNotification[];
+  total: number;
+}
+
+export interface StepUpToken {
+  access_token: string;
   token_type: string;
   expires_in: number;
 }
@@ -68,7 +100,23 @@ export interface Employee {
   date_of_joining: string;
   date_of_exit?: string | null;
   manager_id?: number | null;
+  shift_id?: number | null;
+  photo_url?: string | null;
   profile?: EmployeeProfile | null;
+}
+
+export interface Shift {
+  id: number;
+  name: string;
+  start_time: string; // "HH:mm:ss"
+  end_time: string;
+  grace_minutes: number;
+  full_day_minutes: number;
+  half_day_minutes: number;
+  weekly_offs: number[]; // weekday ints, Mon=0 … Sun=6
+  is_active: boolean;
+  is_default: boolean;
+  assigned_count: number;
 }
 
 export interface EmergencyContact {
@@ -84,10 +132,54 @@ export interface EmployeeProfile {
   gender?: string | null;
   address?: string | null;
   bank_account_no?: string | null;
+  bank_account_last4?: string | null;
   bank_ifsc?: string | null;
   bank_name?: string | null;
   pan?: string | null;
   emergency_contacts?: EmergencyContact[] | null;
+  pending_bank_detail_change?: boolean;
+}
+
+export interface BankDetailChangeRequest {
+  id: number;
+  employee_id: number;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  requested_by_user_id?: number | null;
+  reviewed_by_user_id?: number | null;
+  status: BankDetailChangeStatus;
+  changes: string[];
+  bank_account_no?: string | null;
+  bank_account_last4?: string | null;
+  bank_ifsc?: string | null;
+  bank_name?: string | null;
+  decision_note?: string | null;
+  decided_at?: string | null;
+  created_at?: string | null;
+}
+
+export interface BankAccountReveal {
+  employee_id: number;
+  bank_account_no?: string | null;
+  bank_account_no_masked?: string | null;
+}
+
+export interface Announcement {
+  id: number;
+  title: string;
+  body: string;
+  created_at?: string | null;
+  created_by_name?: string | null;
+}
+
+export interface LatestPayslip {
+  run_id: number;
+  payroll_detail_id: number;
+  period_year: number;
+  period_month: number;
+  net_pay: number;
+  status: string;
+  paid_on?: string | null;
 }
 
 export interface AttendanceLog {
@@ -108,6 +200,7 @@ export interface AttendanceDaily {
   worked_minutes: number;
   status: AttendanceStatus;
   is_late: boolean;
+  is_early_leave: boolean;
   has_missing_punch: boolean;
   is_locked: boolean;
 }
@@ -121,6 +214,7 @@ export interface TodayStatus {
   last_out?: string | null;
   worked_minutes: number;
   status: AttendanceStatus;
+  is_late: boolean;
 }
 
 export interface AttendanceSummary {
@@ -420,6 +514,14 @@ export interface SalaryTemplate {
   is_active: boolean;
 }
 
+export interface ApplyTemplateRequest {
+  employee_id: number;
+  template_id: number;
+  effective_from: string;
+  ctc_annual?: number;
+  basic_monthly?: number;
+}
+
 export interface PaySchedule {
   work_week: number[];
   salary_calc_basis: "actual" | "org_days";
@@ -427,6 +529,7 @@ export interface PaySchedule {
   pay_day_type: "last_working_day" | "fixed_day";
   pay_day?: number | null;
   first_payroll_month?: string | null;
+  lop_policy: "attendance" | "exception";
 }
 
 export interface UserListItem {

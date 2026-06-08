@@ -1,12 +1,13 @@
 """Report (Excel) export endpoints — generated asynchronously."""
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import require_hr
+from app.core.audit import record_audit
+from app.core.deps import require_hr, require_step_up
 from app.models.user import User
 from app.services import report_service
 
@@ -45,6 +46,31 @@ def payroll_report(run_id: int, db: Session = Depends(get_db), current: User = D
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return _stream(data, f"payroll_run_{run_id}.xlsx")
+
+
+@router.get("/bank-transfer")
+def bank_transfer_export(
+    run_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_hr),
+    _step_up: User = Depends(require_step_up("BANK_TRANSFER_EXPORT")),
+):
+    try:
+        data, row_count = report_service.bank_transfer_export(db, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    record_audit(
+        db,
+        actor=current,
+        action="report.bank_transfer_export",
+        entity="payroll_runs",
+        entity_id=run_id,
+        ip=request.client.host if request.client else None,
+        after={"row_count": row_count},
+    )
+    db.commit()
+    return _stream(data, f"bank_transfer_run_{run_id}.xlsx")
 
 
 @router.get("/employees")

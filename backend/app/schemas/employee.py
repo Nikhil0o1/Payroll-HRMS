@@ -1,13 +1,13 @@
 """Employee schemas."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.core.security import validate_password_strength
-from app.models.enums import EmployeeStatus, EmploymentType, RoleName
+from app.models.enums import BankDetailChangeStatus, EmployeeStatus, EmploymentType, RoleName
 from app.schemas.common import ORMModel
 
 
@@ -31,10 +31,43 @@ class EmployeeProfileBase(BaseModel):
 class EmployeeProfileOut(EmployeeProfileBase, ORMModel):
     id: int
     employee_id: int
+    bank_account_last4: Optional[str] = None
+    pending_bank_detail_change: bool = False
 
 
 class EmployeeProfileUpdate(EmployeeProfileBase):
-    pass
+    # Employee-level contact details, editable via self-service profile.
+    # (These live on the Employee row, not the profile — the service routes them.)
+    personal_email: Optional[EmailStr] = None
+    phone: Optional[str] = Field(default=None, max_length=32)
+
+
+class BankDetailChangeRequestOut(ORMModel):
+    id: int
+    employee_id: int
+    employee_name: Optional[str] = None
+    employee_code: Optional[str] = None
+    requested_by_user_id: Optional[int] = None
+    reviewed_by_user_id: Optional[int] = None
+    status: BankDetailChangeStatus
+    changes: List[str] = []
+    bank_account_no: Optional[str] = None
+    bank_account_last4: Optional[str] = None
+    bank_ifsc: Optional[str] = None
+    bank_name: Optional[str] = None
+    decision_note: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class BankDetailChangeDecision(BaseModel):
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class BankAccountRevealOut(BaseModel):
+    employee_id: int
+    bank_account_no: Optional[str] = None
+    bank_account_no_masked: Optional[str] = None
 
 
 class EmployeeBase(BaseModel):
@@ -76,6 +109,7 @@ class EmployeeUpdate(BaseModel):
     department: Optional[str] = None
     designation: Optional[str] = None
     manager_id: Optional[int] = None
+    shift_id: Optional[int] = None
     employment_type: Optional[EmploymentType] = None
     status: Optional[EmployeeStatus] = None
 
@@ -92,6 +126,8 @@ class EmployeeListItem(ORMModel):
     status: EmployeeStatus
     date_of_joining: date
     manager_id: Optional[int] = None
+    shift_id: Optional[int] = None
+    photo_url: Optional[str] = None
 
 
 class EmployeeOut(EmployeeListItem):

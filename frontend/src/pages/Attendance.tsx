@@ -45,7 +45,7 @@ import {
 import { SimpleTooltip } from "@/components/ui/tooltip";
 import { AttendanceBadge } from "@/components/status-badge";
 import { api } from "@/lib/api";
-import { cn, minutesToHours } from "@/lib/utils";
+import { cn, formatISTTime, minutesToHours } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
 import type { AttendanceDaily, AttendanceSummary } from "@/types/api";
 
@@ -268,6 +268,7 @@ export function AttendancePage() {
                           {data.worked_minutes ? ` · ${minutesToHours(data.worked_minutes)}` : ""}
                         </span>
                         {data.is_late ? <span className="block">Late arrival</span> : null}
+                        {data.is_early_leave ? <span className="block">Early checkout</span> : null}
                         {data.has_missing_punch ? <span className="block">Missing punch</span> : null}
                       </span>
                     }
@@ -355,10 +356,10 @@ export function AttendancePage() {
                       <AttendanceBadge status={d.status} />
                     </TableCell>
                     <TableCell className="tabular-nums text-muted-foreground">
-                      {d.first_in ? format(parseISO(d.first_in), "HH:mm") : "—"}
+                      {formatISTTime(d.first_in)}
                     </TableCell>
                     <TableCell className="tabular-nums text-muted-foreground">
-                      {d.last_out ? format(parseISO(d.last_out), "HH:mm") : "—"}
+                      {formatISTTime(d.last_out)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums font-medium">
                       {minutesToHours(d.worked_minutes)}
@@ -368,6 +369,11 @@ export function AttendancePage() {
                         {d.is_late ? (
                           <Badge variant="warning">
                             <Clock className="h-3 w-3" /> Late
+                          </Badge>
+                        ) : null}
+                        {d.is_early_leave ? (
+                          <Badge variant="warning">
+                            <Timer className="h-3 w-3" /> Early out
                           </Badge>
                         ) : null}
                         {d.has_missing_punch ? (
@@ -380,7 +386,7 @@ export function AttendancePage() {
                             <Lock className="h-3 w-3" /> Locked
                           </Badge>
                         ) : null}
-                        {!d.is_late && !d.has_missing_punch && !d.is_locked ? (
+                        {!d.is_late && !d.is_early_leave && !d.has_missing_punch && !d.is_locked ? (
                           <span className="text-xs text-muted-foreground">—</span>
                         ) : null}
                       </div>

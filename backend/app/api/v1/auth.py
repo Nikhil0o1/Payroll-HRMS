@@ -11,11 +11,13 @@ from app.core.ratelimit import rate_limit
 from app.models.user import User
 from app.schemas.auth import (
     AccessOnly,
+    AuthPolicy,
     ChangePasswordRequest,
     LoginRequest,
     MeResponse,
     RefreshRequest,
     SignupRequest,
+    StepUpRequest,
     TokenPair,
 )
 from app.schemas.common import Message
@@ -33,6 +35,14 @@ _refresh_limiter = rate_limit(30, 60, "refresh")
 
 def _expires_in() -> int:
     return settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+
+@router.get("/policy", response_model=AuthPolicy)
+def auth_policy() -> AuthPolicy:
+    """Public — returns the company-domain allow-list so the Login / Signup
+    pages can show a hint and validate before hitting the server. Empty list
+    means no restriction is in effect."""
+    return AuthPolicy(allowed_email_domains=settings.allowed_email_domains)
 
 
 @router.post("/signup", response_model=TokenPair, status_code=201, dependencies=[Depends(_signup_limiter)])
@@ -67,6 +77,23 @@ def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get
         db, payload.refresh_token, ip=request.client.host if request.client else None
     )
     return TokenPair(access_token=access, refresh_token=new_refresh, expires_in=_expires_in())
+
+
+@router.post("/step-up", response_model=AccessOnly)
+def step_up(
+    payload: StepUpRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AccessOnly:
+    token = auth_service.issue_step_up_token(
+        db,
+        user,
+        payload.password,
+        payload.purpose,
+        ip=request.client.host if request.client else None,
+    )
+    return AccessOnly(access_token=token, expires_in=settings.STEP_UP_TOKEN_EXPIRE_MINUTES * 60)
 
 
 @router.post("/logout", response_model=Message)

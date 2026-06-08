@@ -4,7 +4,9 @@ import {
   CalendarClock,
   ChevronLeft,
   ClipboardList,
+  Clock,
   MapPin,
+  Megaphone,
   ReceiptText,
   Users,
 } from "lucide-react";
@@ -13,9 +15,11 @@ import { cn } from "@/lib/utils";
 const ITEMS = [
   { to: "organisation", label: "Organisation Profile", icon: Building2 },
   { to: "work-locations", label: "Work Locations", icon: MapPin },
+  { to: "shifts", label: "Shifts", icon: Clock },
   { to: "salary-components", label: "Salary Components", icon: ClipboardList },
   { to: "salary-templates", label: "Salary Templates", icon: ReceiptText },
   { to: "pay-schedule", label: "Pay Schedule", icon: CalendarClock },
+  { to: "announcements", label: "Announcements", icon: Megaphone },
   { to: "users-roles", label: "Users & Roles", icon: Users },
 ] as const;
 

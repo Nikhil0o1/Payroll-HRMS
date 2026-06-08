@@ -167,11 +167,13 @@ For more depth, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/DA
 ### 1 · Backend
 
 ```powershell
+# From the repo root — `.env` lives here, alongside README and LICENSE.
+copy .env.example .env                # macOS/Linux: cp .env.example .env
+
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1          # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-copy .env.example .env                # macOS/Linux: cp .env.example .env
 
 # Apply schema (PostgreSQL). Skip on SQLite — tables auto-create on startup.
 alembic upgrade head
@@ -212,7 +214,7 @@ The product surfaces only **Admin** and **Employee** in the UI. The 4-tier RBAC 
 
 ## Configuration
 
-All configuration lives in `backend/.env`. Highlights:
+All configuration lives in a single `.env` at the **repo root** (loaded automatically no matter which directory you launch `uvicorn` from). Highlights:
 
 ```ini
 # App
@@ -244,6 +246,12 @@ FIRST_SUPERADMIN_EMAIL=admin@company.com
 FIRST_SUPERADMIN_PASSWORD=Admin@12345
 AUTO_BOOTSTRAP_ON_STARTUP=true              # idempotent — safe to leave on
 
+# Company-domain allow-list (optional, recommended for production)
+# Restricts signup, login, admin-invite and admin-create-employee to addresses
+# ending in one of these domains. Empty = no restriction.
+# ALLOWED_EMAIL_DOMAINS=yanthraa.com
+# ALLOWED_EMAIL_DOMAINS=yanthraa.com,yanthraa.in
+
 # Payroll policy
 PAYROLL_REQUIRE_SEPARATE_APPROVER=true      # maker-checker
 WORKDAY_START="09:30"
@@ -252,7 +260,7 @@ HALF_DAY_MINUTES=240
 WEEKEND_DAYS=[5,6]                          # Sat, Sun (Mon=0)
 ```
 
-See [`backend/.env.example`](backend/.env.example) for the full surface, including S3 storage and account-lockout knobs.
+See [`.env.example`](.env.example) for the full surface, including S3 storage and account-lockout knobs.
 
 ---
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -33,6 +33,12 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, apiErrorMessage } from "@/lib/api";
+import {
+  isEmailDomainAllowed,
+  useAuthPolicy,
+  workEmailErrorMessage,
+  workEmailHint,
+} from "@/lib/auth-policy";
 import { initials } from "@/lib/utils";
 import { rolesAtLeast, useAuthStore } from "@/stores/auth";
 import type { Role, RoleRow, UserListItem } from "@/types/api";
@@ -231,11 +237,18 @@ function UsersTab() {
   );
 }
 
-const inviteSchema = z.object({
-  email: z.string().email("Enter a valid email"),
-  role: z.enum(["EMPLOYEE", "MANAGER", "HR_ADMIN", "SUPER_ADMIN"]),
-});
-type InviteValues = z.infer<typeof inviteSchema>;
+function buildInviteSchema(allowedDomains: readonly string[] | undefined) {
+  return z.object({
+    email: z
+      .string()
+      .email("Enter a valid email")
+      .refine((v) => isEmailDomainAllowed(v, allowedDomains), {
+        message: workEmailErrorMessage(allowedDomains),
+      }),
+    role: z.enum(["EMPLOYEE", "MANAGER", "HR_ADMIN", "SUPER_ADMIN"]),
+  });
+}
+type InviteValues = z.infer<ReturnType<typeof buildInviteSchema>>;
 
 function InviteDialog({
   open,
@@ -249,6 +262,10 @@ function InviteDialog({
   const qc = useQueryClient();
   const me = useAuthStore((s) => s.me);
   const isSuper = rolesAtLeast(me?.role, "SUPER_ADMIN");
+  const policy = useAuthPolicy();
+  const allowedDomains = policy.data?.allowed_email_domains;
+  const emailHint = workEmailHint(allowedDomains);
+  const inviteSchema = useMemo(() => buildInviteSchema(allowedDomains), [allowedDomains]);
 
   const form = useForm<InviteValues>({
     resolver: zodResolver(inviteSchema),
@@ -286,9 +303,19 @@ function InviteDialog({
             <Label className="mb-1.5 block text-sm">
               Work email<span className="ml-0.5 text-destructive">*</span>
             </Label>
-            <Input type="email" {...form.register("email")} placeholder="name@company.com" />
+            <Input
+              type="email"
+              {...form.register("email")}
+              placeholder={
+                allowedDomains && allowedDomains.length > 0
+                  ? `name@${allowedDomains[0]}`
+                  : "name@company.com"
+              }
+            />
             {form.formState.errors.email ? (
               <p className="mt-1 text-xs text-destructive">{form.formState.errors.email.message}</p>
+            ) : emailHint ? (
+              <p className="mt-1 text-xs text-muted-foreground">{emailHint}</p>
             ) : null}
           </div>
           <div>

@@ -7,7 +7,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.models.enums import AttendanceStatus, PunchSource, PunchType
-from app.schemas.common import ORMModel
+from app.schemas.common import AwareUTCDatetime, ORMModel
 
 
 class PunchRequest(BaseModel):
@@ -26,7 +26,7 @@ class AdminPunchCreate(BaseModel):
 class AttendanceLogOut(ORMModel):
     id: int
     employee_id: int
-    timestamp: datetime
+    timestamp: AwareUTCDatetime
     type: PunchType
     source: PunchSource
     note: Optional[str] = None
@@ -36,11 +36,12 @@ class AttendanceDailyOut(ORMModel):
     id: int
     employee_id: int
     work_date: date
-    first_in: Optional[datetime] = None
-    last_out: Optional[datetime] = None
+    first_in: Optional[AwareUTCDatetime] = None
+    last_out: Optional[AwareUTCDatetime] = None
     worked_minutes: int
     status: AttendanceStatus
     is_late: bool
+    is_early_leave: bool = False
     has_missing_punch: bool
     is_locked: bool
 
@@ -64,8 +65,9 @@ class TodayStatus(BaseModel):
     work_date: date
     is_punched_in: bool
     last_punch_type: Optional[PunchType] = None
-    last_punch_at: Optional[datetime] = None
-    first_in: Optional[datetime] = None
-    last_out: Optional[datetime] = None
+    last_punch_at: Optional[AwareUTCDatetime] = None
+    first_in: Optional[AwareUTCDatetime] = None
+    last_out: Optional[AwareUTCDatetime] = None
     worked_minutes: int = 0
     status: AttendanceStatus = AttendanceStatus.ABSENT
+    is_late: bool = False

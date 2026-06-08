@@ -4,6 +4,7 @@ import {
   CalendarClock,
   Download,
   FileSpreadsheet,
+  KeyRound,
   Plane,
   Users,
   Wallet,
@@ -13,6 +14,16 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/ui/page-header";
 import {
@@ -24,7 +35,7 @@ import {
 } from "@/components/ui/select";
 import { api, apiErrorMessage } from "@/lib/api";
 import { monthLabel } from "@/lib/utils";
-import type { Page, PayrollRun } from "@/types/api";
+import type { Page, PayrollRun, StepUpToken } from "@/types/api";
 
 function ReportCard({
   icon: Icon,
@@ -190,6 +201,7 @@ export function ReportsPage() {
           >
             <Download className="h-4 w-4" /> Download
           </Button>
+          <BankTransferExportButton runId={runId} />
         </ReportCard>
 
         <ReportCard
@@ -203,5 +215,68 @@ export function ReportsPage() {
         </ReportCard>
       </div>
     </>
+  );
+}
+
+function BankTransferExportButton({ runId }: { runId: number | null }) {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const exportBankTransfer = async () => {
+    if (!runId) return;
+    try {
+      const step = await api.post<StepUpToken>("/auth/step-up", {
+        password,
+        purpose: "BANK_TRANSFER_EXPORT",
+      });
+      const r = await api.get("/reports/bank-transfer", {
+        params: { run_id: runId },
+        responseType: "blob",
+        headers: { "X-Step-Up-Token": step.data.access_token },
+      });
+      const url = URL.createObjectURL(new Blob([r.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bank_transfer_run_${runId}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setPassword("");
+      setOpen(false);
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button className="w-full" variant="outline" disabled={!runId}>
+          <KeyRound className="h-4 w-4" /> Bank transfer
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Bank transfer export</DialogTitle>
+          <DialogDescription>Confirm your password to continue.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label htmlFor="bank-transfer-password">Password</Label>
+          <Input
+            id="bank-transfer-password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={!password || !runId} onClick={exportBankTransfer}>
+            <Download className="h-4 w-4" /> Download
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

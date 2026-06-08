@@ -37,6 +37,10 @@ class OrganizationProfile(Base):
     work_week: Mapped[list] = mapped_column(JSON, default=lambda: [0, 1, 2, 3, 4])
     salary_calc_basis: Mapped[str] = mapped_column(String(20), default="actual")  # actual | org_days
     org_working_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Loss-of-pay policy:
+    #   attendance → pay for days actually present + paid leave (strict)
+    #   exception  → pay full salary, deduct only approved unpaid-leave days
+    lop_policy: Mapped[str] = mapped_column(String(16), default="attendance")
     pay_day_type: Mapped[str] = mapped_column(String(24), default="last_working_day")  # last_working_day | fixed_day
     pay_day: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     first_payroll_month: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)

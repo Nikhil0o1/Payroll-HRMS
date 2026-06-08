@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { format, parseISO } from "date-fns";
-import { CalendarCheck2, CalendarPlus, Check, X } from "lucide-react";
+import { AlertTriangle, CalendarCheck2, CalendarPlus, Check, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -56,6 +56,12 @@ const applySchema = z
     end_date: z.string().min(1, "Required"),
     half_day: z.boolean().default(false),
     reason: z.string().min(4, "Reason must be at least 4 characters").max(500),
+  })
+  // Can't apply for a day that's already over. Evaluated against the current
+  // date at submit time (not import time) so it stays correct past midnight.
+  .refine((d) => d.start_date >= format(new Date(), "yyyy-MM-dd"), {
+    message: "Start date can't be in the past",
+    path: ["start_date"],
   })
   .refine((d) => d.end_date >= d.start_date, { message: "End date cannot be before start", path: ["end_date"] });
 
@@ -195,6 +201,11 @@ function ApplyLeaveDialog() {
     onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
+  // Today (local) — lower bound for the date pickers. Recomputed each render
+  // so it never goes stale during a long-lived session.
+  const today = format(new Date(), "yyyy-MM-dd");
+  const startDate = form.watch("start_date");
+
   if (!me?.employee) return null;
 
   return (
@@ -213,21 +224,33 @@ function ApplyLeaveDialog() {
         <form className="space-y-4" onSubmit={form.handleSubmit((v) => submit.mutate(v))}>
           <div className="space-y-1.5">
             <Label>Leave type</Label>
-            <Select
-              value={String(form.watch("leave_type_id") || "")}
-              onValueChange={(v) => form.setValue("leave_type_id", Number(v), { shouldValidate: true })}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Choose a leave type" />
-              </SelectTrigger>
-              <SelectContent>
-                {types.data?.map((t) => (
-                  <SelectItem key={t.id} value={String(t.id)}>
-                    {t.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {types.isLoading ? (
+              <Skeleton className="h-10 w-full rounded-md" />
+            ) : (types.data?.length ?? 0) === 0 ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-100">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  No leave types are configured yet. Ask your admin to add leave types from
+                  <span className="font-medium"> Settings → Leave types</span> before you can apply.
+                </span>
+              </div>
+            ) : (
+              <Select
+                value={String(form.watch("leave_type_id") || "")}
+                onValueChange={(v) => form.setValue("leave_type_id", Number(v), { shouldValidate: true })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a leave type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {types.data!.map((t) => (
+                    <SelectItem key={t.id} value={String(t.id)}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {form.formState.errors.leave_type_id ? (
               <p className="text-xs text-destructive">Choose a leave type</p>
             ) : null}
@@ -235,14 +258,16 @@ function ApplyLeaveDialog() {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="start_date">From</Label>
-              <Input id="start_date" type="date" {...form.register("start_date")} />
+              <Input id="start_date" type="date" min={today} {...form.register("start_date")} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="end_date">To</Label>
-              <Input id="end_date" type="date" {...form.register("end_date")} />
+              <Input id="end_date" type="date" min={startDate || today} {...form.register("end_date")} />
             </div>
           </div>
-          {form.formState.errors.end_date ? (
+          {form.formState.errors.start_date ? (
+            <p className="text-xs text-destructive -mt-2">{form.formState.errors.start_date.message}</p>
+          ) : form.formState.errors.end_date ? (
             <p className="text-xs text-destructive -mt-2">{form.formState.errors.end_date.message}</p>
           ) : null}
           <label className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2.5 text-sm">
@@ -260,7 +285,11 @@ function ApplyLeaveDialog() {
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" loading={submit.isPending}>
+            <Button
+              type="submit"
+              loading={submit.isPending}
+              disabled={(types.data?.length ?? 0) === 0}
+            >
               Submit
             </Button>
           </DialogFooter>

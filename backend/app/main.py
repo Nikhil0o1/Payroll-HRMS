@@ -36,7 +36,7 @@ def create_app() -> FastAPI:
         allow_origins=settings.BACKEND_CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Step-Up-Token"],
         expose_headers=["X-Request-ID"],
     )
 
@@ -97,18 +97,30 @@ def create_app() -> FastAPI:
 
             Base.metadata.create_all(bind=engine)
 
-        # Idempotent bootstrap: roles + the single admin from .env. Nothing else.
-        # Leave types, holidays, and employees are admin-configured via the UI.
+        # Idempotent bootstrap: roles, default leave types, and the single
+        # admin from .env. Default leave types are only seeded into an empty
+        # table — once the admin has configured anything, we never re-add.
         if settings.AUTO_BOOTSTRAP_ON_STARTUP:
             from app.core.database import SessionLocal
-            from app.seed import ensure_roles, ensure_super_admin
+            from app.seed import (
+                ensure_default_leave_types,
+                ensure_roles,
+                ensure_super_admin,
+            )
 
             db = SessionLocal()
             try:
                 roles = ensure_roles(db)
                 ensure_super_admin(db, roles)
+                seeded = ensure_default_leave_types(db)
                 db.commit()
-                logger.info("Bootstrap ready (roles + admin user seeded)")
+                if seeded:
+                    logger.info(
+                        "Bootstrap ready (roles + admin + default leave types: %s)",
+                        ", ".join(s.code for s in seeded),
+                    )
+                else:
+                    logger.info("Bootstrap ready (roles + admin user seeded)")
             except Exception:
                 db.rollback()
                 logger.exception("Bootstrap on startup failed")

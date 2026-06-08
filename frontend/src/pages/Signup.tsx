@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,32 +10,49 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, apiErrorMessage } from "@/lib/api";
+import {
+  isEmailDomainAllowed,
+  useAuthPolicy,
+  workEmailErrorMessage,
+  workEmailHint,
+} from "@/lib/auth-policy";
 import { useAuthStore } from "@/stores/auth";
 import type { Tokens } from "@/types/api";
 
-const schema = z
-  .object({
-    first_name: z.string().min(1, "First name is required").max(100),
-    last_name: z.string().min(1, "Last name is required").max(100),
-    email: z.string().email("Enter a valid work email"),
-    phone: z.string().max(32).optional().or(z.literal("")),
-    department: z.string().max(120).optional().or(z.literal("")),
-    designation: z.string().max(120).optional().or(z.literal("")),
-    date_of_joining: z.string().optional().or(z.literal("")),
-    password: z.string().min(8, "At least 8 characters").max(128),
-    confirm_password: z.string().min(1, "Please confirm your password"),
-  })
-  .refine((v) => v.password === v.confirm_password, {
-    path: ["confirm_password"],
-    message: "Passwords don't match",
-  });
-type FormValues = z.infer<typeof schema>;
+function buildSchema(allowedDomains: readonly string[] | undefined) {
+  return z
+    .object({
+      first_name: z.string().min(1, "First name is required").max(100),
+      last_name: z.string().min(1, "Last name is required").max(100),
+      email: z
+        .string()
+        .email("Enter a valid work email")
+        .refine((v) => isEmailDomainAllowed(v, allowedDomains), {
+          message: workEmailErrorMessage(allowedDomains),
+        }),
+      phone: z.string().max(32).optional().or(z.literal("")),
+      department: z.string().max(120).optional().or(z.literal("")),
+      designation: z.string().max(120).optional().or(z.literal("")),
+      date_of_joining: z.string().optional().or(z.literal("")),
+      password: z.string().min(8, "At least 8 characters").max(128),
+      confirm_password: z.string().min(1, "Please confirm your password"),
+    })
+    .refine((v) => v.password === v.confirm_password, {
+      path: ["confirm_password"],
+      message: "Passwords don't match",
+    });
+}
+type FormValues = z.infer<ReturnType<typeof buildSchema>>;
 
 export function SignupPage() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const setTokens = useAuthStore((s) => s.setTokens);
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
+  const policy = useAuthPolicy();
+  const allowedDomains = policy.data?.allowed_email_domains;
+  const emailHint = workEmailHint(allowedDomains);
+  const schema = useMemo(() => buildSchema(allowedDomains), [allowedDomains]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -125,11 +142,17 @@ export function SignupPage() {
                 id="email"
                 type="email"
                 autoComplete="email"
-                placeholder="you@company.com"
+                placeholder={
+                  allowedDomains && allowedDomains.length > 0
+                    ? `you@${allowedDomains[0]}`
+                    : "you@company.com"
+                }
                 {...form.register("email")}
               />
               {form.formState.errors.email ? (
                 <p className="text-xs text-destructive">{form.formState.errors.email.message}</p>
+              ) : emailHint ? (
+                <p className="text-xs text-muted-foreground">{emailHint}</p>
               ) : null}
             </div>
 

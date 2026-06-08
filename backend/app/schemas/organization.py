@@ -201,6 +201,7 @@ class PayScheduleOut(BaseModel):
     pay_day_type: str  # "last_working_day" | "fixed_day"
     pay_day: Optional[int] = None
     first_payroll_month: Optional[str] = None  # "YYYY-MM"
+    lop_policy: str = "attendance"  # "attendance" | "exception"
 
 
 class PayScheduleUpdate(BaseModel):
@@ -210,6 +211,7 @@ class PayScheduleUpdate(BaseModel):
     pay_day_type: Optional[str] = None
     pay_day: Optional[int] = Field(default=None, ge=1, le=31)
     first_payroll_month: Optional[str] = None
+    lop_policy: Optional[str] = None
 
     @field_validator("salary_calc_basis")
     @classmethod
@@ -219,6 +221,16 @@ class PayScheduleUpdate(BaseModel):
         v = v.lower()
         if v not in {"actual", "org_days"}:
             raise ValueError("salary_calc_basis must be 'actual' or 'org_days'")
+        return v
+
+    @field_validator("lop_policy")
+    @classmethod
+    def _lop(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.lower()
+        if v not in {"attendance", "exception"}:
+            raise ValueError("lop_policy must be 'attendance' or 'exception'")
         return v
 
     @field_validator("pay_day_type")

@@ -62,6 +62,8 @@ class AttendanceDaily(Base):
         enum_column(AttendanceStatus), default=AttendanceStatus.ABSENT
     )
     is_late: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Left before the assigned shift's end time.
+    is_early_leave: Mapped[bool] = mapped_column(Boolean, default=False)
     has_missing_punch: Mapped[bool] = mapped_column(Boolean, default=False)
     # Frozen when the covering month's payroll run is LOCKED.
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)

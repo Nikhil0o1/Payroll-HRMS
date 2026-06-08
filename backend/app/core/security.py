@@ -64,10 +64,34 @@ def create_access_token(subject: str | int, role: str, extra: Optional[dict] = N
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
+def create_step_up_token(subject: str | int, purpose: str, extra: Optional[dict] = None) -> str:
+    now = datetime.now(timezone.utc)
+    payload: dict[str, Any] = {
+        "sub": str(subject),
+        "purpose": purpose,
+        "type": "step_up",
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.STEP_UP_TOKEN_EXPIRE_MINUTES),
+    }
+    if extra:
+        payload.update(extra)
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
 def decode_access_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         if payload.get("type") != "access":
+            return None
+        return payload
+    except JWTError:
+        return None
+
+
+def decode_step_up_token(token: str) -> Optional[dict]:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != "step_up":
             return None
         return payload
     except JWTError:

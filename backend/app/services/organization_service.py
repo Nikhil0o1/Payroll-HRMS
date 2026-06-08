@@ -15,6 +15,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
+from app.core.email_policy import assert_email_domain_allowed
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.security import hash_password
 from app.models.employee import Employee
@@ -357,6 +358,7 @@ def get_pay_schedule(db: Session) -> dict:
         "pay_day_type": p.pay_day_type,
         "pay_day": p.pay_day,
         "first_payroll_month": p.first_payroll_month,
+        "lop_policy": getattr(p, "lop_policy", None) or "attendance",
     }
 
 
@@ -444,6 +446,7 @@ def invite_user(
         raise ConflictError("You cannot grant a role higher than your own")
 
     email = payload.email.lower().strip()
+    assert_email_domain_allowed(email)
     if db.scalar(select(User).where(User.email == email)):
         raise ConflictError(f"A user with email {email} already exists")
 

@@ -94,3 +94,9 @@ class PayrollStatus(str, enum.Enum):
     REVIEW = "REVIEW"
     APPROVED = "APPROVED"
     LOCKED = "LOCKED"
+
+
+class BankDetailChangeStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"

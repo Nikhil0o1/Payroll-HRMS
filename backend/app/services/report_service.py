@@ -12,8 +12,9 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.crypto import mask_bank_account
 from app.models.attendance import AttendanceDaily, AttendanceLog
-from app.models.employee import Employee
+from app.models.employee import Employee, EmployeeProfile
 from app.models.enums import EmployeeStatus, LeaveStatus
 from app.models.leave import LeaveRequest, LeaveType
 from app.models.payroll import PayrollDetail, PayrollRun
@@ -130,8 +131,9 @@ def payroll_report(db: Session, *, run_id: int) -> bytes:
         raise ValueError("Payroll run not found")
     rows = list(
         db.execute(
-            select(PayrollDetail, Employee)
+            select(PayrollDetail, Employee, EmployeeProfile)
             .join(Employee, Employee.id == PayrollDetail.employee_id)
+            .outerjoin(EmployeeProfile, EmployeeProfile.employee_id == Employee.id)
             .where(PayrollDetail.run_id == run_id)
             .order_by(Employee.employee_code)
         )
@@ -140,7 +142,7 @@ def payroll_report(db: Session, *, run_id: int) -> bytes:
     # Collect every component code so we can produce one column per component.
     earning_codes: list[str] = []
     deduction_codes: list[str] = []
-    for detail, _emp in rows:
+    for detail, _emp, _profile in rows:
         for e in detail.earnings or []:
             if e["code"] not in earning_codes:
                 earning_codes.append(e["code"])
@@ -152,14 +154,22 @@ def payroll_report(db: Session, *, run_id: int) -> bytes:
     ws = wb.active
     ws.title = f"Payroll-{run.period_year}-{run.period_month:02d}"
     headers = (
-        ["Employee Code", "Name", "Department", "Working Days", "Payable Days", "LOP Days"]
+        [
+            "Employee Code",
+            "Name",
+            "Department",
+            "Bank Account (Masked)",
+            "Working Days",
+            "Payable Days",
+            "LOP Days",
+        ]
         + [f"E:{c}" for c in earning_codes]
         + ["Gross"]
         + [f"D:{c}" for c in deduction_codes]
         + ["Total Deductions", "Net Pay"]
     )
     _style_header(ws, headers)
-    for detail, emp in rows:
+    for detail, emp, profile in rows:
         e_map = {e["code"]: float(e["amount"]) for e in (detail.earnings or [])}
         d_map = {d["code"]: float(d["amount"]) for d in (detail.deductions or [])}
         ws.append(
@@ -167,6 +177,7 @@ def payroll_report(db: Session, *, run_id: int) -> bytes:
                 emp.employee_code,
                 emp.full_name,
                 emp.department or "",
+                mask_bank_account(profile.bank_account_no_plain if profile else None) or "",
                 float(detail.working_days),
                 float(detail.payable_days),
                 float(detail.lop_days),
@@ -178,6 +189,49 @@ def payroll_report(db: Session, *, run_id: int) -> bytes:
         )
     _autosize(ws)
     return _book_to_bytes(wb)
+
+
+def bank_transfer_export(db: Session, *, run_id: int) -> tuple[bytes, int]:
+    run = db.get(PayrollRun, run_id)
+    if not run:
+        raise ValueError("Payroll run not found")
+    rows = list(
+        db.execute(
+            select(PayrollDetail, Employee, EmployeeProfile)
+            .join(Employee, Employee.id == PayrollDetail.employee_id)
+            .outerjoin(EmployeeProfile, EmployeeProfile.employee_id == Employee.id)
+            .where(PayrollDetail.run_id == run_id)
+            .order_by(Employee.employee_code)
+        )
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"BankTransfer-{run.period_year}-{run.period_month:02d}"
+    headers = [
+        "Employee Code",
+        "Name",
+        "Bank",
+        "IFSC",
+        "Account Number",
+        "Net Pay",
+    ]
+    _style_header(ws, headers)
+    for detail, emp, profile in rows:
+        ws.append(
+            [
+                emp.employee_code,
+                emp.full_name,
+                profile.bank_name if profile and profile.bank_name else "",
+                profile.bank_ifsc if profile and profile.bank_ifsc else "",
+                profile.bank_account_no_plain if profile else "",
+                round(float(detail.net_pay), 2),
+            ]
+        )
+    for cell in ws["E"][1:]:
+        cell.number_format = "@"
+    _autosize(ws)
+    return _book_to_bytes(wb), len(rows)
 
 
 # ---- Employees ----

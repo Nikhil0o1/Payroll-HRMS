@@ -17,6 +17,9 @@ export function useOrgBranding() {
 
 /** App-shell brand mark — shows the org logo when uploaded, otherwise the
  * blue tile + wallet glyph (Zoho-style fallback). */
+const BRAND_DIM = { sm: "h-7 w-7", md: "h-9 w-9", lg: "h-12 w-12" } as const;
+const BRAND_GLYPH = { sm: "h-4 w-4", md: "h-[18px] w-[18px]", lg: "h-7 w-7" } as const;
+
 export function BrandMark({
   branding,
   variant = "dark",
@@ -24,14 +27,15 @@ export function BrandMark({
 }: {
   branding?: OrganisationBranding;
   variant?: "dark" | "light";
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
 }) {
-  const dim = size === "sm" ? "h-7 w-7" : "h-8 w-8";
+  const dim = BRAND_DIM[size];
   if (branding?.logo_key) {
     return (
       <div
         className={cn(
-          "shrink-0 rounded-lg overflow-hidden grid place-items-center shadow-soft",
+          "shrink-0 overflow-hidden grid place-items-center shadow-card ring-1 ring-black/5",
+          size === "lg" ? "rounded-xl" : "rounded-lg",
           dim,
           variant === "dark" ? "bg-white" : "bg-card",
         )}
@@ -39,7 +43,7 @@ export function BrandMark({
         <img
           src={branding.logo_key}
           alt={branding.name}
-          className="h-full w-full object-contain p-0.5"
+          className={cn("h-full w-full object-contain", size === "lg" ? "p-1" : "p-0.5")}
         />
       </div>
     );
@@ -51,7 +55,7 @@ export function BrandMark({
         dim,
       )}
     >
-      <Wallet className={size === "sm" ? "h-4 w-4" : "h-[18px] w-[18px]"} />
+      <Wallet className={BRAND_GLYPH[size]} />
     </div>
   );
 }

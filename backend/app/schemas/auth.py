@@ -42,6 +42,17 @@ class TokenPair(BaseModel):
     expires_in: int  # seconds for the access token
 
 
+class AuthPolicy(BaseModel):
+    """Public auth policy used by the Login / Signup pages to render
+    domain-aware hints and validate before hitting the API.
+
+    ``allowed_email_domains`` is an empty list when no restriction is in
+    effect, so the frontend can simply branch on ``length > 0``.
+    """
+
+    allowed_email_domains: list[str] = []
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
@@ -50,6 +61,11 @@ class AccessOnly(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
+
+class StepUpRequest(BaseModel):
+    password: str = Field(min_length=1)
+    purpose: str = Field(min_length=1, max_length=80)
 
 
 class ChangePasswordRequest(BaseModel):
@@ -67,6 +83,7 @@ class MeEmployee(ORMModel):
     work_email: str
     department: Optional[str] = None
     designation: Optional[str] = None
+    photo_url: Optional[str] = None
 
 
 class MeResponse(ORMModel):

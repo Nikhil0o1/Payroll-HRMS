@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional
 
 from pydantic import field_validator, model_validator
@@ -12,10 +13,16 @@ logger = logging.getLogger("hrms")
 
 _INSECURE_SECRETS = {"CHANGE_ME", "CHANGE_ME_super_secret_dev_key_only", ""}
 
+# Repo root holds the canonical `.env` (one location regardless of which
+# directory you launch uvicorn from). This file lives at:
+#   <root>/backend/app/core/config.py  →  parents[3] = <root>
+PROJECT_ROOT: Path = Path(__file__).resolve().parents[3]
+ENV_FILE: Path = PROJECT_ROOT / ".env"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=str(ENV_FILE), env_file_encoding="utf-8", extra="ignore"
     )
 
     # App
@@ -33,6 +40,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "CHANGE_ME"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    STEP_UP_TOKEN_EXPIRE_MINUTES: int = 5
+    BANK_ACCOUNT_ENCRYPTION_KEY: Optional[str] = None
     ALGORITHM: str = "HS256"
 
     # Brute-force protection.
@@ -44,6 +53,18 @@ class Settings(BaseSettings):
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 60
     ACCOUNT_LOCKOUT_THRESHOLD: int = 8        # failed logins (per account) before temp lock (0 = disabled)
     ACCOUNT_LOCKOUT_MINUTES: int = 15
+
+    # Company domain allow-list. Empty = no restriction (dev/demo). When set,
+    # every email-introducing entry point — signup, login, admin-invite,
+    # admin-create-employee — is restricted to addresses ending in one of
+    # these domains. Stored as a raw string for friendly env input — read the
+    # parsed list via :pyattr:`allowed_email_domains`. Accepts comma-separated
+    # values or a JSON array; a leading ``@`` is allowed (it's stripped).
+    # Examples:
+    #   ALLOWED_EMAIL_DOMAINS=yanthraa.com
+    #   ALLOWED_EMAIL_DOMAINS=yanthraa.com, yanthraa.in
+    #   ALLOWED_EMAIL_DOMAINS=["yanthraa.com","yanthraa.in"]
+    ALLOWED_EMAIL_DOMAINS: str = ""
 
     # Storage
     STORAGE_BACKEND: str = "local"
@@ -76,7 +97,11 @@ class Settings(BaseSettings):
     PAYROLL_REQUIRE_SEPARATE_APPROVER: bool = True
 
     # Payroll / attendance policy
-    WORKDAY_START: str = "09:30"
+    # Business timezone — attendance is a local-time concept (punch times shown
+    # to users, workday-start lateness, which calendar day a punch belongs to).
+    # Timestamps are stored as UTC and presented in this zone.
+    APP_TIMEZONE: str = "Asia/Kolkata"
+    WORKDAY_START: str = "09:30"  # local (APP_TIMEZONE) wall-clock
     FULL_DAY_MINUTES: int = 480
     HALF_DAY_MINUTES: int = 240
     WEEKEND_DAYS: List[int] = [5, 6]  # Mon=0 ... Sun=6
@@ -107,6 +132,11 @@ class Settings(BaseSettings):
                 "SECRET_KEY must be set to a strong random value of >= 32 chars "
                 '(generate: python -c "import secrets; print(secrets.token_urlsafe(48))")'
             )
+        if self.is_production and not self.BANK_ACCOUNT_ENCRYPTION_KEY:
+            problems.append(
+                "BANK_ACCOUNT_ENCRYPTION_KEY must be set in production "
+                '(generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")'
+            )
         if "*" in self.BACKEND_CORS_ORIGINS:
             problems.append("BACKEND_CORS_ORIGINS must not contain '*' in production")
         if self.is_sqlite:
@@ -126,6 +156,34 @@ class Settings(BaseSettings):
             for p in problems:
                 logger.warning("[config] %s (allowed in development only)", p)
         return self
+
+    @property
+    def allowed_email_domains(self) -> list[str]:
+        """Parsed view of :pyattr:`ALLOWED_EMAIL_DOMAINS`. Empty list when
+        no policy is configured. Tolerates JSON arrays, comma-separated
+        strings, leading ``@`` and mixed whitespace/case."""
+        import json
+
+        raw = (self.ALLOWED_EMAIL_DOMAINS or "").strip()
+        if not raw:
+            return []
+        items: list[str]
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                items = [str(x) for x in parsed] if isinstance(parsed, list) else []
+            except json.JSONDecodeError:
+                items = []
+        else:
+            items = [s.strip() for s in raw.split(",") if s.strip()]
+        out: list[str] = []
+        seen: set[str] = set()
+        for s in items:
+            d = s.strip().lower().lstrip("@")
+            if d and d not in seen:
+                out.append(d)
+                seen.add(d)
+        return out
 
     @property
     def is_sqlite(self) -> bool:

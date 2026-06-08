@@ -1,11 +1,21 @@
 """Shared Pydantic primitives."""
 from __future__ import annotations
 
-from typing import Generic, List, TypeVar
+from datetime import datetime
+from typing import Annotated, Generic, List, TypeVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PlainSerializer
+
+from app.core.time import as_aware_utc
 
 T = TypeVar("T")
+
+# A datetime stored as naive-UTC that should be emitted with an explicit UTC
+# offset so clients localise it correctly (e.g. punch times -> IST in the UI)
+# instead of mistaking the UTC wall-clock for local time.
+AwareUTCDatetime = Annotated[
+    datetime, PlainSerializer(as_aware_utc, when_used="json")
+]
 
 
 class ORMModel(BaseModel):

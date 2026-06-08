@@ -202,6 +202,9 @@ def _overlap_exists(db: Session, employee_id: int, start: date, end: date, exclu
 def apply_leave(
     db: Session, *, employee_id: int, payload: LeaveRequestCreate, actor: Optional[User] = None
 ) -> LeaveRequest:
+    # Can't book a day that's already over (server-side guard mirroring the UI).
+    if payload.start_date < utcnow_naive().date():
+        raise DomainError("Leave start date cannot be in the past.", status_code=400)
     days = _calc_days(payload.start_date, payload.end_date, payload.half_day)
     if _overlap_exists(db, employee_id, payload.start_date, payload.end_date):
         raise ConflictError("Overlapping leave already exists for this period.")

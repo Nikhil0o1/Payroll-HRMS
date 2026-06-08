@@ -38,6 +38,7 @@ const schema = z.object({
   pay_day_type: z.enum(["last_working_day", "fixed_day"]),
   pay_day: z.coerce.number().min(1).max(31).optional().nullable(),
   first_payroll_month: z.string().regex(/^\d{4}-\d{2}$/, "Use YYYY-MM"),
+  lop_policy: z.enum(["attendance", "exception"]),
 });
 type Values = z.infer<typeof schema>;
 
@@ -62,6 +63,7 @@ export default function PaySchedulePage() {
       pay_day_type: "last_working_day",
       pay_day: 30,
       first_payroll_month: thisMonth(),
+      lop_policy: "attendance",
     },
   });
 
@@ -74,6 +76,7 @@ export default function PaySchedulePage() {
         pay_day_type: q.data.pay_day_type,
         pay_day: q.data.pay_day ?? 30,
         first_payroll_month: q.data.first_payroll_month ?? thisMonth(),
+        lop_policy: q.data.lop_policy ?? "attendance",
       });
     }
   }, [q.data]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -94,6 +97,7 @@ export default function PaySchedulePage() {
 
   const ww = form.watch("work_week") ?? [];
   const basis = form.watch("salary_calc_basis");
+  const lopPolicy = form.watch("lop_policy");
   const payDayType = form.watch("pay_day_type");
   const firstMonth = form.watch("first_payroll_month") ?? thisMonth();
 
@@ -197,6 +201,39 @@ export default function PaySchedulePage() {
               }
             />
           </div>
+        </Section>
+
+        <Section
+          title="Loss of pay (LOP) policy"
+          required
+          help="How unworked days reduce an employee's salary."
+        >
+          <div className="space-y-3">
+            <RadioRow
+              checked={lopPolicy === "attendance"}
+              onChange={() => form.setValue("lop_policy", "attendance", { shouldDirty: true })}
+              label={
+                <span>
+                  <span className="font-medium text-foreground">Attendance-based</span> — pay only
+                  for days present + approved leave. Missing attendance counts as LOP.
+                </span>
+              }
+            />
+            <RadioRow
+              checked={lopPolicy === "exception"}
+              onChange={() => form.setValue("lop_policy", "exception", { shouldDirty: true })}
+              label={
+                <span>
+                  <span className="font-medium text-foreground">Fixed salary</span> — pay the full
+                  salary and deduct only approved unpaid-leave days. Missing punches don't reduce
+                  pay.
+                </span>
+              }
+            />
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Both options still pro-rate mid-month joiners and leavers by their employment dates.
+          </p>
         </Section>
 
         <Section title="Pay your employees on" required>

@@ -58,7 +58,7 @@ export default function WorkLocations() {
 
   return (
     <div>
-      <div className="flex items-start justify-between mb-6 gap-3">
+      <div className="flex flex-col gap-4 mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Settings
@@ -68,7 +68,7 @@ export default function WorkLocations() {
             Add the offices and addresses where your employees work.
           </p>
         </div>
-        <Button onClick={() => setCreating(true)}>
+        <Button onClick={() => setCreating(true)} className="shrink-0 self-start sm:self-auto">
           <Plus className="h-4 w-4" />
           Add Work Location
         </Button>
@@ -101,7 +101,9 @@ export default function WorkLocations() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="font-semibold text-foreground truncate">{loc.name}</h3>
+                  <h3 className="font-semibold leading-snug text-foreground break-words" title={loc.name}>
+                    {loc.name}
+                  </h3>
                   {loc.is_primary ? (
                     <Badge variant="success" className="mt-1.5 text-[10px]">
                       Filing address

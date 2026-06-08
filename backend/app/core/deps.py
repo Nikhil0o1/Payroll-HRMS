@@ -4,16 +4,17 @@ from __future__ import annotations
 from typing import Iterable
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token, decode_step_up_token
 from app.models.enums import ROLE_RANK, RoleName
 from app.models.user import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/login")
+step_up_scheme = APIKeyHeader(name="X-Step-Up-Token", auto_error=False)
 
 _CRED_EXC = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -62,6 +63,34 @@ def require_roles(*roles: RoleName):
 require_manager = require_roles(RoleName.MANAGER, RoleName.HR_ADMIN, RoleName.SUPER_ADMIN)
 require_hr = require_roles(RoleName.HR_ADMIN, RoleName.SUPER_ADMIN)
 require_super_admin = require_roles(RoleName.SUPER_ADMIN)
+
+
+def require_step_up(*purposes: str):
+    allowed = set(purposes)
+
+    def _guard(
+        token: str | None = Depends(step_up_scheme),
+        current_user: User = Depends(get_current_user),
+    ) -> User:
+        payload = decode_step_up_token(token or "")
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Step-up authentication is required",
+            )
+        if str(current_user.id) != str(payload.get("sub")):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Step-up token does not belong to the current user",
+            )
+        if allowed and payload.get("purpose") not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Step-up token is not valid for this action",
+            )
+        return current_user
+
+    return _guard
 
 
 def is_privileged(user: User) -> bool:

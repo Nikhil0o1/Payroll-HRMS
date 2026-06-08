@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -8,7 +8,7 @@ import { format, parseISO } from "date-fns";
 import { ChevronLeft, ChevronRight, Download, FileUp, Search, Upload, UserPlus, Users, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { UserAvatar } from "@/components/user-avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -42,20 +42,33 @@ import {
 } from "@/components/ui/table";
 import { EmployeeStatusBadge } from "@/components/status-badge";
 import { api, apiErrorMessage } from "@/lib/api";
-import { cn, initials } from "@/lib/utils";
+import {
+  isEmailDomainAllowed,
+  useAuthPolicy,
+  workEmailErrorMessage,
+  workEmailHint,
+} from "@/lib/auth-policy";
+import { cn } from "@/lib/utils";
 import { rolesAtLeast, useAuthStore } from "@/stores/auth";
 import type { Employee, Page } from "@/types/api";
 
-const createSchema = z.object({
-  first_name: z.string().min(1),
-  last_name: z.string().min(1),
-  work_email: z.string().email(),
-  date_of_joining: z.string().min(1),
-  department: z.string().optional(),
-  designation: z.string().optional(),
-  employment_type: z.enum(["FULL_TIME", "PART_TIME", "CONTRACT", "INTERN"]),
-});
-type CreateValues = z.infer<typeof createSchema>;
+function buildCreateSchema(allowedDomains: readonly string[] | undefined) {
+  return z.object({
+    first_name: z.string().min(1),
+    last_name: z.string().min(1),
+    work_email: z
+      .string()
+      .email()
+      .refine((v) => isEmailDomainAllowed(v, allowedDomains), {
+        message: workEmailErrorMessage(allowedDomains),
+      }),
+    date_of_joining: z.string().min(1),
+    department: z.string().optional(),
+    designation: z.string().optional(),
+    employment_type: z.enum(["FULL_TIME", "PART_TIME", "CONTRACT", "INTERN"]),
+  });
+}
+type CreateValues = z.infer<ReturnType<typeof buildCreateSchema>>;
 
 const EMPLOYMENT_LABELS: Record<Employee["employment_type"], string> = {
   FULL_TIME: "Full-time",
@@ -184,11 +197,12 @@ export function EmployeesPage() {
                         to={`/employees/${e.id}`}
                         className="flex items-center gap-3"
                       >
-                        <Avatar className="h-9 w-9 shrink-0 ring-1 ring-border">
-                          <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
-                            {initials(`${e.first_name} ${e.last_name}`)}
-                          </AvatarFallback>
-                        </Avatar>
+                        <UserAvatar
+                          name={`${e.first_name} ${e.last_name}`}
+                          src={e.photo_url}
+                          className="h-9 w-9 shrink-0 ring-1 ring-border"
+                          fallbackClassName="bg-primary/10 text-xs font-medium text-primary"
+                        />
                         <div className="min-w-0">
                           <div className="truncate font-medium text-foreground group-hover:text-primary">
                             {e.first_name} {e.last_name}
@@ -275,6 +289,10 @@ function TableSkeleton() {
 function CreateDialog() {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
+  const policy = useAuthPolicy();
+  const allowedDomains = policy.data?.allowed_email_domains;
+  const emailHint = workEmailHint(allowedDomains);
+  const createSchema = useMemo(() => buildCreateSchema(allowedDomains), [allowedDomains]);
   const form = useForm<CreateValues>({
     resolver: zodResolver(createSchema),
     defaultValues: {
@@ -326,7 +344,20 @@ function CreateDialog() {
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label>Work email</Label>
-            <Input type="email" {...form.register("work_email")} />
+            <Input
+              type="email"
+              placeholder={
+                allowedDomains && allowedDomains.length > 0
+                  ? `name@${allowedDomains[0]}`
+                  : "name@company.com"
+              }
+              {...form.register("work_email")}
+            />
+            {form.formState.errors.work_email ? (
+              <p className="text-xs text-destructive">{form.formState.errors.work_email.message}</p>
+            ) : emailHint ? (
+              <p className="text-xs text-muted-foreground">{emailHint}</p>
+            ) : null}
           </div>
           <div className="space-y-1.5">
             <Label>Date of joining</Label>

@@ -1,38 +1,69 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { differenceInCalendarDays, endOfMonth, format, parseISO, startOfMonth } from "date-fns";
+import {
+  differenceInCalendarDays,
+  endOfMonth,
+  format,
+  getDaysInMonth,
+  parseISO,
+  startOfMonth,
+  subMonths,
+} from "date-fns";
 import {
   ArrowRight,
   CalendarCheck2,
   CalendarDays,
+  CalendarX2,
+  CheckCircle2,
+  ChevronRight,
   Clock,
+  Coffee,
   Coins,
+  Download,
   History,
   Info,
   LogIn,
   LogOut,
+  Megaphone,
+  Plane,
   Receipt,
   ReceiptText,
+  RefreshCw,
   Sparkles,
   TimerReset,
-  Users,
   Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StackedBars } from "@/components/ui/charts";
-import { AttendanceBadge } from "@/components/status-badge";
+import { ColoredBars, StackedBars } from "@/components/ui/charts";
 import { api, apiErrorMessage } from "@/lib/api";
-import { cn, formatCurrency, minutesToHours, monthLabel } from "@/lib/utils";
+import { cn, formatCurrency, formatISTTime, minutesToHours, monthLabel } from "@/lib/utils";
 import { rolesAtLeast, useAuthStore } from "@/stores/auth";
 import { useOrgBranding } from "@/components/brand";
-import type { AdminMetrics, AttendanceSummary, EmployeeDashboardData, PayrollCostPoint } from "@/types/api";
+import type {
+  AdminMetrics,
+  Announcement,
+  AttendanceDaily,
+  AttendanceSummary,
+  Holiday,
+  LatestPayslip,
+  LeaveBalance,
+  PayrollCostPoint,
+  TodayStatus,
+} from "@/types/api";
 
 const ORG_NAME = "your organisation";
 
@@ -54,141 +85,221 @@ export function DashboardPage() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// EMPLOYEE — single-screen, dense, no scrolling.
+// EMPLOYEE — single-screen self-service home (fits one page, no scroll).
 // ────────────────────────────────────────────────────────────────────────────
 function EmployeeDashboard() {
   const me = useAuthStore((s) => s.me);
-  const hour = new Date().getHours();
+  const qc = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const now = new Date();
+  const hour = now.getHours();
   const greet = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const displayName = me?.employee
+    ? `${me.employee.first_name} ${me.employee.last_name}`.trim()
+    : me?.email?.split("@")[0];
+
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      await qc.invalidateQueries({
+        predicate: (q) => {
+          const k = q.queryKey[0];
+          return (
+            k === "attendance" ||
+            k === "leaves" ||
+            k === "holidays" ||
+            k === "payslips" ||
+            k === "announcements"
+          );
+        },
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   return (
-    <div className="space-y-4">
-      {/* Compact header — single line */}
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-3">
+      {/* Greeting */}
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">
-            {greet}, {me?.employee?.first_name ?? me?.email?.split("@")[0]}
+            {greet}, {displayName} <span className="align-middle">👋</span>
           </h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {format(new Date(), "EEEE, d MMMM yyyy")}
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {format(now, "EEEE, d MMMM yyyy")} · Week {format(now, "w")}
           </p>
         </div>
-        <span className="hidden sm:inline-flex text-xs text-muted-foreground tabular">
-          Week {format(new Date(), "w")} · {format(new Date(), "yyyy")}
-        </span>
+        <Button variant="outline" size="sm" onClick={refresh} disabled={refreshing}>
+          <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+          Refresh
+        </Button>
       </div>
 
-      {/* Row 1 — Hero punch + month summary */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <PunchCard className="lg:col-span-2" />
+      {/* Row 1 — status / today / month / leave */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <AttendanceStatusCard />
+        <TodayOverviewCard />
         <MonthSummaryCard />
+        <LeaveBalanceCard />
       </div>
 
-      {/* Row 2 — Leave / Holidays / Quick actions */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <LeaveBalanceCard />
-        <UpcomingHolidaysCard />
+      {/* Row 2 — quick actions / holidays / payslip */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <QuickActionsCard />
+        <UpcomingHolidaysCard />
+        <LatestPayslipCard />
+      </div>
+
+      {/* Row 3 — attendance overview / announcements */}
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+        <AttendanceOverviewCard className="xl:col-span-2" />
+        <AnnouncementsCard />
       </div>
     </div>
   );
 }
 
-function PunchCard({ className }: { className?: string }) {
-  const me = useAuthStore((s) => s.me);
-  const qc = useQueryClient();
+/* ── shared bits ── */
 
-  const today = useQuery({
+function CardLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </span>
+  );
+}
+
+function SectionLink({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <Link to={to} className="inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline">
+      {children} <ChevronRight className="h-3 w-3" />
+    </Link>
+  );
+}
+
+function useTodayStatus() {
+  const me = useAuthStore((s) => s.me);
+  return useQuery({
     queryKey: ["attendance", "today"],
-    queryFn: async () =>
-      (await api.get("/attendance/today")).data as EmployeeDashboardData["today_status"],
+    queryFn: async () => (await api.get<TodayStatus>("/attendance/today")).data,
     enabled: !!me?.employee,
     refetchInterval: 60_000,
   });
+}
+
+/* ── Card 1: Attendance status + punch ── */
+function AttendanceStatusCard() {
+  const qc = useQueryClient();
+  const today = useTodayStatus();
+  const status = today.data;
+  const punchedIn = !!status?.is_punched_in;
+  const hasIn = !!status?.first_in;
+  const checkedOut = hasIn && !punchedIn;
 
   const punch = useMutation({
     mutationFn: async (type: "IN" | "OUT") => (await api.post("/attendance/punch", { type })).data,
     onSuccess: (_d, type) => {
       qc.invalidateQueries({ queryKey: ["attendance"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      toast.success(`Punched ${type}`);
+      toast.success(`Punched ${type.toLowerCase()}`);
     },
     onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
-  const status = today.data;
-  const isPunchedIn = !!status?.is_punched_in;
+  const headline = punchedIn ? "Checked in" : checkedOut ? "Checked out" : "Not checked in";
+  const sub = punchedIn
+    ? `since ${formatISTTime(status?.first_in)}`
+    : checkedOut
+      ? `at ${formatISTTime(status?.last_out)}`
+      : "Punch in to start your day";
 
   return (
-    <Card className={className}>
-      <div className="p-5 grid sm:grid-cols-[1fr_auto] gap-5 items-center">
-        <div className="space-y-3 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
-              Today
-            </span>
-            {status ? <AttendanceBadge status={status.status} /> : null}
-            {isPunchedIn ? (
-              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success">
-                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-                On the clock
-              </span>
-            ) : null}
-          </div>
-          <div className="flex items-baseline gap-2.5">
-            <span className="text-[34px] leading-none font-semibold tabular tracking-tight">
-              {status ? minutesToHours(status.worked_minutes) : "—"}
-            </span>
-            <span className="text-sm text-muted-foreground">worked</span>
-          </div>
-          <div className="flex items-center gap-5 text-xs">
-            <PunchStat label="First in" value={status?.first_in} />
-            <span className="h-3 w-px bg-border" />
-            <PunchStat label="Last out" value={status?.last_out} />
-          </div>
-        </div>
-        <div className="flex flex-col gap-2 sm:min-w-[180px]">
-          {isPunchedIn ? (
-            <Button
-              variant="destructive"
-              size="lg"
-              onClick={() => punch.mutate("OUT")}
-              loading={punch.isPending}
-            >
-              <LogOut className="h-4 w-4" /> Punch out
-            </Button>
-          ) : (
-            <Button size="lg" onClick={() => punch.mutate("IN")} loading={punch.isPending}>
-              <LogIn className="h-4 w-4" /> Punch in
-            </Button>
+    <Card className="flex flex-col p-4">
+      <div className="flex items-center justify-between">
+        <CardLabel>Attendance status</CardLabel>
+        {hasIn ? (
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-[11px] font-semibold",
+              status?.is_late ? "bg-warning/15 text-warning" : "bg-success/12 text-success",
+            )}
+          >
+            {status?.is_late ? "Late" : "On time"}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <span
+          className={cn(
+            "h-2.5 w-2.5 shrink-0 rounded-full",
+            punchedIn ? "bg-success animate-pulse" : checkedOut ? "bg-muted-foreground" : "bg-border",
           )}
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/attendance">View attendance</Link>
-          </Button>
-        </div>
+        />
+        <span className="text-lg font-semibold tracking-tight">{headline}</span>
+      </div>
+      <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>
+
+      <div className="mt-3 flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2">
+        <span className="text-xs text-muted-foreground">Working hours today</span>
+        <span className="text-sm font-semibold tabular-nums">
+          {today.isLoading ? "—" : minutesToHours(status?.worked_minutes ?? 0)}
+        </span>
+      </div>
+
+      <Button
+        className="mt-3 w-full"
+        loading={punch.isPending}
+        onClick={() => punch.mutate(punchedIn ? "OUT" : "IN")}
+      >
+        {punchedIn ? <LogOut className="h-4 w-4" /> : <LogIn className="h-4 w-4" />}
+        {punchedIn ? "Punch out" : "Punch in"}
+      </Button>
+    </Card>
+  );
+}
+
+/* ── Card 2: Today's overview ── */
+function TodayOverviewCard() {
+  const today = useTodayStatus();
+  const s = today.data;
+  const rows = [
+    { icon: LogIn, label: "First in", value: formatISTTime(s?.first_in) },
+    { icon: LogOut, label: "Last out", value: formatISTTime(s?.last_out) },
+    { icon: Coffee, label: "Break", value: "—" },
+    {
+      icon: Clock,
+      label: "Total hours",
+      value: s?.last_out ? minutesToHours(s?.worked_minutes ?? 0) : "—",
+    },
+  ];
+  return (
+    <Card className="flex flex-col p-4">
+      <CardLabel>Today's overview</CardLabel>
+      <div className="mt-3 flex-1 space-y-2.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+              <r.icon className="h-4 w-4" />
+              {r.label}
+            </span>
+            <span className="text-sm font-medium tabular-nums">{r.value}</span>
+          </div>
+        ))}
       </div>
     </Card>
   );
 }
 
-function PunchStat({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <div>
-      <span className="text-muted-foreground">{label}</span>
-      <span className="ml-1.5 font-semibold tabular text-foreground">
-        {value ? format(parseISO(value), "HH:mm") : "—"}
-      </span>
-    </div>
-  );
-}
-
+/* ── Card 3: This month summary ── */
 function MonthSummaryCard() {
   const me = useAuthStore((s) => s.me);
-  const today = new Date();
-  const period_start = format(startOfMonth(today), "yyyy-MM-dd");
-  const period_end = format(endOfMonth(today), "yyyy-MM-dd");
+  const now = new Date();
+  const period_start = format(startOfMonth(now), "yyyy-MM-dd");
+  const period_end = format(endOfMonth(now), "yyyy-MM-dd");
 
-  const q = useQuery({
+  const summary = useQuery({
     queryKey: ["attendance", "summary", me?.employee?.id, period_start],
     queryFn: async () =>
       (
@@ -198,174 +309,189 @@ function MonthSummaryCard() {
       ).data,
     enabled: !!me?.employee,
   });
+  const holidays = useHolidays();
 
-  const s = q.data;
-  const monthLabel = format(today, "MMMM");
-  const totalWorkdays =
-    (s?.present_days ?? 0) + (s?.absent_days ?? 0) + (s?.half_days ?? 0) + (s?.leave_days ?? 0);
-  // Working days in month = total calendar days - weekends - holidays.
-  const workingDaysInMonth = Math.max(
-    1,
-    differenceInCalendarDays(endOfMonth(today), startOfMonth(today)) +
-      1 -
-      (s?.weekend_count ?? 0) -
-      (s?.holiday_count ?? 0),
+  const s = summary.data;
+  const holidayKeys = useMemo(
+    () => new Set((holidays.data ?? []).map((h) => h.date)),
+    [holidays.data],
   );
-  const completedPct = Math.min(
-    100,
-    Math.round((((s?.present_days ?? 0) + (s?.half_days ?? 0) * 0.5) / workingDaysInMonth) * 100),
-  );
+  const workingDays = useMemo(() => {
+    let count = 0;
+    const total = getDaysInMonth(now);
+    for (let d = 1; d <= total; d++) {
+      const day = new Date(now.getFullYear(), now.getMonth(), d);
+      const wd = day.getDay();
+      if (wd === 0 || wd === 6) continue;
+      if (holidayKeys.has(format(day, "yyyy-MM-dd"))) continue;
+      count++;
+    }
+    return count;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holidayKeys]);
+
+  const rows = [
+    { icon: CheckCircle2, tone: "text-success", label: "Days worked", value: `${s?.present_days ?? 0} / ${workingDays}` },
+    { icon: Plane, tone: "text-primary", label: "On leave", value: `${s?.leave_days ?? 0}` },
+    { icon: TimerReset, tone: "text-warning", label: "Half days", value: `${s?.half_days ?? 0}` },
+    { icon: CalendarX2, tone: "text-destructive", label: "Absent", value: `${s?.absent_days ?? 0}` },
+  ];
 
   return (
-    <Card className="overflow-hidden">
-      <div className="p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
-              {monthLabel}
-            </p>
-            <p className="text-sm font-semibold mt-0.5">This month at a glance</p>
-          </div>
-          <TimerReset className="h-4 w-4 text-muted-foreground" />
+    <Card className="flex flex-col p-4">
+      <CardLabel>This month summary</CardLabel>
+      {summary.isLoading ? (
+        <Skeleton className="mt-3 h-24 flex-1" />
+      ) : (
+        <div className="mt-3 flex-1 space-y-2">
+          {rows.map((r) => (
+            <div key={r.label} className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                <r.icon className={cn("h-4 w-4", r.tone)} />
+                {r.label}
+              </span>
+              <span className="text-sm font-semibold tabular-nums">{r.value}</span>
+            </div>
+          ))}
         </div>
-
-        {q.isLoading ? (
-          <Skeleton className="h-24" />
-        ) : (
-          <>
-            <div className="space-y-1.5">
-              <div className="flex items-baseline justify-between">
-                <span className="text-2xl font-semibold tabular leading-none">
-                  {minutesToHours(s?.total_worked_minutes ?? 0)}
-                </span>
-                <span className="text-xs text-muted-foreground tabular">
-                  {((s?.present_days ?? 0) + (s?.half_days ?? 0) * 0.5).toFixed(1)} / {workingDaysInMonth} d
-                </span>
-              </div>
-              <Progress value={completedPct} />
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 pt-1 border-t -mx-1 px-1">
-              <MiniStat label="Late" value={s?.late_count ?? 0} />
-              <MiniStat label="Half-days" value={s?.half_days ?? 0} />
-              <MiniStat label="Missing" value={s?.missing_punch_count ?? 0} />
-            </div>
-          </>
-        )}
+      )}
+      <div className="mt-2 pt-1">
+        <SectionLink to="/attendance">View attendance</SectionLink>
       </div>
     </Card>
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="text-center pt-2">
-      <div className="text-base font-semibold tabular leading-none">{value}</div>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">{label}</div>
-    </div>
-  );
-}
-
+/* ── Card 4: Leave balance ── */
 function LeaveBalanceCard() {
   const me = useAuthStore((s) => s.me);
   const q = useQuery({
     queryKey: ["leaves", "balances"],
-    queryFn: async () =>
-      (await api.get("/leaves/balances")).data as Array<{
-        leave_type_id: number;
-        leave_type?: { id: number; code: string; name: string; color?: string };
-        allotted: number;
-        used: number;
-        pending: number;
-        available: number;
-      }>,
+    queryFn: async () => (await api.get<LeaveBalance[]>("/leaves/balances")).data,
     enabled: !!me?.employee,
   });
 
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
-        <div>
-          <CardTitle className="text-sm">Leave balance</CardTitle>
-          <CardDescription className="text-xs">{new Date().getFullYear()} entitlement</CardDescription>
-        </div>
-        <Button variant="ghost" size="sm" asChild className="h-7 -mr-2">
-          <Link to="/leaves" className="text-xs">
-            Apply <ArrowRight className="h-3 w-3" />
-          </Link>
-        </Button>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <Card className="flex flex-col p-4">
+      <div className="flex items-center justify-between">
+        <CardLabel>Leave balance</CardLabel>
+        <SectionLink to="/leaves">View all</SectionLink>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">{new Date().getFullYear()} entitlement</p>
+
+      <div className="mt-3 flex-1 space-y-2.5">
         {q.isLoading ? (
           <Skeleton className="h-20" />
         ) : (q.data ?? []).length === 0 ? (
           <p className="text-xs text-muted-foreground">No leave types configured.</p>
         ) : (
           q.data!.slice(0, 3).map((b) => {
-            const total = b.allotted || 1;
-            const usedPct = Math.min(100, Math.round(((b.used + b.pending) / total) * 100));
+            const total = b.allotted || 0;
+            const pct = total > 0 ? Math.min(100, Math.round((b.available / total) * 100)) : 0;
             return (
-              <div key={b.leave_type_id} className="space-y-1">
+              <div key={b.id} className="space-y-1">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-medium truncate">{b.leave_type?.name ?? b.leave_type?.code}</span>
-                  <span className="tabular shrink-0">
+                  <span className="tabular-nums shrink-0">
                     <span className="font-semibold">{b.available}</span>
                     <span className="text-muted-foreground"> / {b.allotted}</span>
                   </span>
                 </div>
-                <Progress value={usedPct} color={b.leave_type?.color || undefined} className="h-1.5" />
+                <Progress value={pct} color={b.leave_type?.color || undefined} className="h-1.5" />
               </div>
             );
           })
         )}
-      </CardContent>
+      </div>
+      <div className="mt-2 pt-1">
+        <SectionLink to="/leaves">Apply leave</SectionLink>
+      </div>
     </Card>
   );
 }
 
-function UpcomingHolidaysCard() {
-  const q = useQuery({
+/* ── Card 5: Quick actions ── */
+const QUICK_ACTIONS = [
+  { to: "/leaves", label: "Apply Leave", sub: "Request time off", icon: CalendarCheck2, tone: "bg-primary/10 text-primary" },
+  { to: "/regularizations", label: "Regularization", sub: "Correction request", icon: History, tone: "bg-warning/15 text-warning" },
+  { to: "/payslips", label: "My Payslips", sub: "View salary slips", icon: ReceiptText, tone: "bg-success/12 text-success" },
+  { to: "/attendance", label: "Attendance", sub: "View calendar", icon: CalendarDays, tone: "bg-info/12 text-info" },
+];
+
+function QuickActionsCard() {
+  return (
+    <Card className="flex flex-col p-4">
+      <CardTitle className="text-sm">Quick actions</CardTitle>
+      <div className="mt-3 grid flex-1 grid-cols-2 gap-2">
+        {QUICK_ACTIONS.map((a) => (
+          <Link
+            key={a.to}
+            to={a.to}
+            className="group flex items-center gap-2.5 rounded-lg border border-border bg-card px-2.5 py-2.5 transition-colors hover:border-primary/40 hover:bg-muted/40"
+          >
+            <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-lg", a.tone)}>
+              <a.icon className="h-4 w-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-semibold leading-tight">{a.label}</span>
+              <span className="block truncate text-[11px] text-muted-foreground">{a.sub}</span>
+            </span>
+          </Link>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ── Card 6: Upcoming holidays ── */
+function useHolidays() {
+  return useQuery({
     queryKey: ["holidays", "list"],
-    queryFn: async () =>
-      (await api.get("/holidays")).data as Array<{ id: number; name: string; date: string; type: string }>,
+    queryFn: async () => (await api.get<Holiday[]>("/holidays")).data,
   });
+}
+
+function UpcomingHolidaysCard() {
+  const q = useHolidays();
   const upcoming = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return (q.data ?? []).filter((h) => parseISO(h.date) >= today).slice(0, 3);
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return (q.data ?? [])
+      .filter((h) => parseISO(h.date) >= t)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(0, 3);
   }, [q.data]);
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
+    <Card className="flex flex-col p-4">
+      <div className="flex items-center justify-between">
         <CardTitle className="text-sm">Upcoming holidays</CardTitle>
-        <CardDescription className="text-xs">Plan ahead</CardDescription>
-      </CardHeader>
-      <CardContent>
+        <SectionLink to="/holidays">View calendar</SectionLink>
+      </div>
+      <div className="mt-3 flex-1">
         {q.isLoading ? (
-          <Skeleton className="h-20" />
+          <Skeleton className="h-24" />
         ) : upcoming.length === 0 ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-            <CalendarDays className="h-4 w-4" />
-            None scheduled
+          <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
+            <CalendarDays className="h-4 w-4" /> None scheduled
           </div>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-2.5">
             {upcoming.map((h) => {
               const d = parseISO(h.date);
               const days = Math.max(0, differenceInCalendarDays(d, new Date()));
               return (
                 <li key={h.id} className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-md bg-primary/8 text-primary grid place-items-center shrink-0">
-                    <div className="text-center leading-none">
-                      <div className="text-[9px] uppercase">{format(d, "MMM")}</div>
-                      <div className="text-xs font-bold">{format(d, "d")}</div>
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-muted text-center leading-none">
+                    <div className="text-[9px] font-semibold uppercase text-muted-foreground">
+                      {format(d, "MMM")}
                     </div>
+                    <div className="text-sm font-bold tabular-nums">{format(d, "d")}</div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium truncate">{h.name}</div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium leading-tight">{h.name}</div>
                     <div className="text-[11px] text-muted-foreground">
-                      {format(d, "EEE")} · {days === 0 ? "today" : `in ${days}d`}
+                      {format(d, "EEEE")} · {days === 0 ? "Today" : `In ${days} days`}
                     </div>
                   </div>
                 </li>
@@ -373,41 +499,265 @@ function UpcomingHolidaysCard() {
             })}
           </ul>
         )}
-      </CardContent>
+      </div>
     </Card>
   );
 }
 
-function QuickActionsCard() {
-  const actions = [
-    { to: "/leaves", label: "Apply leave", icon: CalendarCheck2 },
-    { to: "/regularizations", label: "Regularize", icon: History },
-    { to: "/payslips", label: "Payslips", icon: ReceiptText },
-  ];
+/* ── Card 7: Latest payslip ── */
+function LatestPayslipCard() {
+  const me = useAuthStore((s) => s.me);
+  const q = useQuery({
+    queryKey: ["payslips", "latest"],
+    queryFn: async () =>
+      (await api.get<LatestPayslip | null>("/payroll/payslips/me/latest")).data,
+    enabled: !!me?.employee,
+  });
+  const slip = q.data;
+
+  async function download() {
+    if (!slip) return;
+    try {
+      const r = await api.get(`/payroll/payslips/detail/${slip.payroll_detail_id}/download`, {
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(new Blob([r.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      const ext = String(r.headers["content-type"] ?? "").includes("pdf") ? "pdf" : "html";
+      a.download = `payslip_${slip.period_year}_${slip.period_month}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+  }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm">Quick actions</CardTitle>
-        <CardDescription className="text-xs">Common requests</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-1">
-        {actions.map((a) => (
-          <Link
-            key={a.to}
-            to={a.to}
-            className="flex items-center gap-2.5 rounded-md px-2 py-2 text-sm font-medium hover:bg-muted transition-colors group"
-          >
-            <span className="h-7 w-7 rounded-md bg-muted grid place-items-center text-muted-foreground group-hover:bg-primary/12 group-hover:text-primary transition-colors">
-              <a.icon className="h-3.5 w-3.5" />
-            </span>
-            <span className="flex-1 text-xs">{a.label}</span>
-            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-          </Link>
-        ))}
-      </CardContent>
+    <Card className="flex flex-col p-4">
+      <div className="flex items-center justify-between">
+        <CardTitle className="text-sm">Latest payslip</CardTitle>
+        <SectionLink to="/payslips">View all</SectionLink>
+      </div>
+      <div className="mt-3 flex-1">
+        {q.isLoading ? (
+          <Skeleton className="h-24" />
+        ) : !slip ? (
+          <div className="flex h-full flex-col items-center justify-center py-4 text-center">
+            <ReceiptText className="h-5 w-5 text-muted-foreground" />
+            <p className="mt-1.5 text-xs text-muted-foreground">No payslips yet</p>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-success/30 bg-success/5 p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold">{monthLabel(slip.period_year, slip.period_month)}</span>
+              <span className="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-semibold text-success">
+                {slip.status}
+              </span>
+            </div>
+            <div className="mt-2 flex items-end justify-between">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Net pay</div>
+                <div className="text-xl font-semibold tabular-nums text-success">
+                  {formatCurrency(slip.net_pay)}
+                </div>
+              </div>
+              {slip.paid_on ? (
+                <div className="text-right">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Paid on</div>
+                  <div className="text-xs font-medium tabular-nums">
+                    {format(parseISO(slip.paid_on), "d MMM yyyy")}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <Button variant="outline" size="sm" className="mt-3 w-full" onClick={download}>
+              <Download className="h-4 w-4" /> Download payslip
+            </Button>
+          </div>
+        )}
+      </div>
     </Card>
   );
+}
+
+/* ── Card 8: Attendance overview ── */
+const ATT_LEGEND = [
+  { key: "PRESENT", letter: "P", label: "Present", badge: "bg-success", fill: "hsl(var(--success))" },
+  { key: "HALF_DAY", letter: "H", label: "Half day", badge: "bg-warning", fill: "hsl(var(--warning))" },
+  { key: "ABSENT", letter: "A", label: "Absent", badge: "bg-destructive", fill: "hsl(var(--destructive))" },
+  { key: "ON_LEAVE", letter: "O", label: "On leave", badge: "bg-primary", fill: "hsl(var(--primary))" },
+  { key: "WEEKEND", letter: "W", label: "Weekly off", badge: "bg-muted-foreground", fill: "hsl(var(--muted-foreground))" },
+] as const;
+
+function AttendanceOverviewCard({ className }: { className?: string }) {
+  const me = useAuthStore((s) => s.me);
+  const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth() + 1;
+
+  const monthOptions = useMemo(
+    () => Array.from({ length: 6 }, (_, i) => startOfMonth(subMonths(new Date(), i))),
+    [],
+  );
+
+  const q = useQuery({
+    queryKey: ["attendance", "month", me?.employee?.id, year, month],
+    queryFn: async () =>
+      (await api.get<AttendanceDaily[]>("/attendance/month", { params: { year, month } })).data,
+    enabled: !!me?.employee,
+  });
+  const rows = q.data ?? [];
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of rows) c[r.status] = (c[r.status] ?? 0) + 1;
+    return c;
+  }, [rows]);
+
+  const byDate = useMemo(() => {
+    const m = new Map<string, AttendanceDaily>();
+    rows.forEach((r) => m.set(r.work_date, r));
+    return m;
+  }, [rows]);
+
+  const days = getDaysInMonth(cursor);
+  const chartData = useMemo(
+    () =>
+      Array.from({ length: days }, (_, i) => {
+        const key = format(new Date(year, month - 1, i + 1), "yyyy-MM-dd");
+        const row = byDate.get(key);
+        const legend = ATT_LEGEND.find((l) => l.key === row?.status);
+        return {
+          name: String(i + 1),
+          value: row ? Math.round(((row.worked_minutes || 0) / 60) * 10) / 10 : 0,
+          color: legend?.fill ?? "hsl(var(--border))",
+        };
+      }),
+    [byDate, days, year, month],
+  );
+  const xInterval = days > 16 ? 2 : 0;
+
+  return (
+    <Card className={cn("flex flex-col p-4", className)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <CardTitle className="text-sm">Attendance overview</CardTitle>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            Your attendance summary for {format(cursor, "MMMM yyyy")}
+          </p>
+        </div>
+        <Select
+          value={format(cursor, "yyyy-MM")}
+          onValueChange={(v) => setCursor(startOfMonth(parseISO(`${v}-01`)))}
+        >
+          <SelectTrigger className="h-8 w-[150px] shrink-0 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent align="end">
+            {monthOptions.map((m) => (
+              <SelectItem key={format(m, "yyyy-MM")} value={format(m, "yyyy-MM")}>
+                {format(m, "MMMM yyyy")}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="mt-4 flex items-stretch gap-5">
+        {/* Bars */}
+        <div className="min-w-0 flex-1">
+          {q.isLoading ? (
+            <Skeleton className="h-[200px] w-full" />
+          ) : rows.length === 0 ? (
+            <div className="grid h-[200px] w-full place-items-center text-xs text-muted-foreground">
+              No attendance recorded for this month yet.
+            </div>
+          ) : (
+            <ColoredBars
+              data={chartData}
+              height={200}
+              maxBarSize={20}
+              xInterval={xInterval}
+              unit="Worked"
+              yFormatter={(v) => `${v}h`}
+              valueFormatter={(v) => `${v} h`}
+            />
+          )}
+        </div>
+
+        {/* Legend */}
+        <div className="flex w-[132px] shrink-0 flex-col justify-center gap-2.5">
+          {ATT_LEGEND.map((l) => (
+            <div key={l.key} className="flex items-center gap-2 text-xs">
+              <span
+                className={cn(
+                  "grid h-5 w-5 shrink-0 place-items-center rounded text-[10px] font-bold text-white",
+                  l.badge,
+                )}
+              >
+                {l.letter}
+              </span>
+              <span className="flex-1 text-muted-foreground">{l.label}</span>
+              <span className="font-semibold tabular-nums">{counts[l.key] ?? 0}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ── Card 9: Announcements ── */
+function AnnouncementsCard({ className }: { className?: string }) {
+  const q = useQuery({
+    queryKey: ["announcements"],
+    queryFn: async () => (await api.get<Announcement[]>("/announcements")).data,
+  });
+  const items = q.data ?? [];
+
+  return (
+    <Card className={cn("flex min-h-[240px] flex-col p-4", className)}>
+      <div className="flex items-center justify-between">
+        <CardTitle className="text-sm">Announcements</CardTitle>
+      </div>
+      <div className="mt-3 max-h-[220px] flex-1 overflow-y-auto scrollbar-thin pr-1">
+        {q.isLoading ? (
+          <Skeleton className="h-24" />
+        ) : items.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center py-6 text-center">
+            <Megaphone className="h-6 w-6 text-muted-foreground" />
+            <p className="mt-2 text-xs text-muted-foreground">No announcements</p>
+          </div>
+        ) : (
+          <ul className="space-y-2.5">
+            {items.map((a) => (
+              <li key={a.id} className="flex gap-2.5">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium leading-tight">{a.title}</div>
+                  <div className="text-xs text-muted-foreground line-clamp-2">{a.body}</div>
+                  {a.created_at ? (
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {relativeTime(a.created_at)}
+                    </div>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function relativeTime(iso: string): string {
+  const days = differenceInCalendarDays(new Date(), parseISO(iso));
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+  return format(parseISO(iso), "d MMM yyyy");
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -1,34 +1,39 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
+  AlertTriangle,
   BarChart3,
   Bell,
+  BellOff,
   Building2,
   CalendarCheck2,
   CalendarClock,
   CalendarDays,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   ChevronsLeft,
   ClipboardCheck,
   ClipboardList,
+  Clock,
   HelpCircle,
   History,
   KeyRound,
   LayoutGrid,
   LifeBuoy,
   MapPin,
+  Megaphone,
   LogOut,
   Menu,
   ReceiptText,
-  Search,
   Settings,
   UserCircle2,
   Users,
   Wallet,
   X,
 } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { formatDistanceToNowStrict, parseISO } from "date-fns";
+import { UserAvatar } from "@/components/user-avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,12 +42,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn, initials } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { rolesAtLeast, useAuthStore } from "@/stores/auth";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { BrandMark, useOrgBranding } from "@/components/brand";
-import type { OrganisationBranding } from "@/types/api";
+import { GlobalSearch } from "@/components/global-search";
+import { useNotifications, useUnreadNotifications } from "@/lib/notifications";
+import type { AppNotification, OrganisationBranding } from "@/types/api";
+
+const SUPPORT_EMAIL = "hr@yanthraa.com";
+const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+  "Payroll support request",
+)}`;
 
 interface NavItem {
   to: string;
@@ -87,9 +99,11 @@ const EMPLOYEE_NAV: NavEntry[] = [
 const SETTINGS_ITEMS: NavItem[] = [
   { to: "/settings/organisation", label: "Organisation Profile", icon: Building2 },
   { to: "/settings/work-locations", label: "Work Locations", icon: MapPin },
+  { to: "/settings/shifts", label: "Shifts", icon: Clock },
   { to: "/settings/salary-components", label: "Salary Components", icon: ClipboardList },
   { to: "/settings/salary-templates", label: "Salary Templates", icon: ReceiptText },
   { to: "/settings/pay-schedule", label: "Pay Schedule", icon: CalendarClock },
+  { to: "/settings/announcements", label: "Announcements", icon: Megaphone },
   { to: "/settings/users-roles", label: "Users & Roles", icon: Users },
 ];
 
@@ -159,6 +173,7 @@ export function AppLayout() {
             collapsed={collapsed}
             branding={branding}
             onCollapseToggle={() => setCollapsed((c) => !c)}
+            onLogout={handleLogout}
           />
         </aside>
       ) : null}
@@ -176,6 +191,7 @@ export function AppLayout() {
               collapsed={false}
               branding={branding}
               onClose={() => setMobileOpen(false)}
+              onLogout={handleLogout}
             />
           </aside>
         </div>
@@ -201,15 +217,16 @@ export function AppLayout() {
           </button>
 
           <div className={cn("flex-1 flex items-center gap-3", !inSettings && "pl-3 sm:pl-5")}>
-            {isAdmin ? <TopSearch /> : <div className="flex-1" />}
+            {isAdmin ? <GlobalSearch /> : <div className="flex-1" />}
           </div>
 
-          {/* Org switcher */}
+          {/* Org switcher — full name on desktop, graceful truncation when space is tight */}
           <button
             onClick={() => setSettingsOpen(true)}
-            className="hidden sm:inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium hover:bg-white/60 transition-colors max-w-[260px]"
+            title={orgName}
+            className="hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium hover:bg-white/60 transition-colors max-w-[180px] md:max-w-[280px] lg:max-w-none"
           >
-            <span className="truncate">{orgName}</span>
+            <span className="truncate lg:overflow-visible lg:text-clip">{orgName}</span>
             <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
           </button>
 
@@ -229,11 +246,12 @@ export function AppLayout() {
                 className="ml-1 rounded-full ring-1 ring-border transition hover:ring-primary/40"
                 aria-label="Account menu"
               >
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
-                    {initials(displayName)}
-                  </AvatarFallback>
-                </Avatar>
+                <UserAvatar
+                  name={displayName}
+                  src={me?.employee?.photo_url}
+                  className="h-8 w-8"
+                  fallbackClassName="bg-primary/10 text-primary text-xs font-semibold"
+                />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[15rem]">
@@ -290,20 +308,22 @@ function Sidebar({
   branding,
   onClose,
   onCollapseToggle,
+  onLogout,
 }: {
   nav: NavEntry[];
   collapsed: boolean;
   branding?: OrganisationBranding;
   onClose?: () => void;
   onCollapseToggle?: () => void;
+  onLogout?: () => void;
 }) {
   return (
     <div className="flex h-full flex-col text-sidebar-foreground">
       {/* Brand */}
-      <div className={cn("h-14 flex items-center gap-2.5 px-4", collapsed && "justify-center px-0")}>
-        <BrandMark branding={branding} variant="dark" />
+      <div className={cn("h-16 flex items-center gap-2.5 px-3.5", collapsed && "justify-center px-0")}>
+        <BrandMark branding={branding} variant="dark" size="lg" />
         {!collapsed ? (
-          <span className="text-[17px] font-semibold tracking-tight text-white">Payroll</span>
+          <span className="text-lg font-semibold tracking-tight text-white">Payroll</span>
         ) : null}
         {onClose ? (
           <button onClick={onClose} className="ml-auto p-1.5 rounded-md text-white/70 hover:bg-white/10">
@@ -325,28 +345,40 @@ function Sidebar({
       {/* Footer */}
       <div className="px-2.5 py-3 space-y-1 border-t border-sidebar-border">
         <a
-          href="mailto:support@acme.com"
+          href={SUPPORT_MAILTO}
           className={cn(
             "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground hover:bg-white/[0.06] hover:text-white transition-colors",
             collapsed && "justify-center px-0",
           )}
-          title="Contact Support"
+          title={`Contact Support · ${SUPPORT_EMAIL}`}
         >
           <LifeBuoy className="h-[18px] w-[18px] shrink-0" />
           {!collapsed ? "Contact Support" : null}
         </a>
-        {onCollapseToggle ? (
+        {onLogout ? (
           <button
-            onClick={onCollapseToggle}
+            onClick={onLogout}
+            title="Sign out"
             className={cn(
-              "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 hover:bg-white/[0.06] hover:text-white transition-colors",
+              "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-destructive/15 hover:text-red-300",
               collapsed && "justify-center px-0",
             )}
-            title={collapsed ? "Expand" : "Collapse"}
           >
-            <ChevronsLeft className={cn("h-[18px] w-[18px] shrink-0 transition-transform", collapsed && "rotate-180")} />
-            {!collapsed ? "Collapse" : null}
+            <LogOut className="h-[18px] w-[18px] shrink-0" />
+            {!collapsed ? "Sign out" : null}
           </button>
+        ) : null}
+        {onCollapseToggle ? (
+          <div className={cn("flex pt-0.5", collapsed ? "justify-center" : "justify-end")}>
+            <button
+              onClick={onCollapseToggle}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={collapsed ? "Expand" : "Collapse"}
+              className="grid h-8 w-8 place-items-center rounded-md text-sidebar-foreground/60 hover:bg-white/[0.06] hover:text-white transition-colors"
+            >
+              <ChevronsLeft className={cn("h-[18px] w-[18px] shrink-0 transition-transform", collapsed && "rotate-180")} />
+            </button>
+          </div>
         ) : null}
       </div>
     </div>
@@ -438,37 +470,6 @@ function SidebarGroup({ group, collapsed }: { group: NavGroup; collapsed: boolea
 
 /* ─────────────────────────── Top bar pieces ─────────────────────────── */
 
-function TopSearch() {
-  const navigate = useNavigate();
-  const [q, setQ] = useState("");
-  return (
-    <form
-      className="relative flex-1 max-w-md"
-      onSubmit={(e) => {
-        e.preventDefault();
-        navigate(`/employees${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`);
-      }}
-    >
-      <div className="flex h-9 w-full items-center rounded-md border border-input bg-card transition focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/30">
-        <button
-          type="button"
-          aria-label="Search filter"
-          className="flex h-full items-center gap-1 border-r border-input pl-2.5 pr-2 text-muted-foreground hover:text-foreground"
-        >
-          <Search className="h-4 w-4" />
-          <ChevronDown className="h-3.5 w-3.5" />
-        </button>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search Employee"
-          className="h-full flex-1 rounded-r-md bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
-        />
-      </div>
-    </form>
-  );
-}
-
 function IconButton({
   children,
   label,
@@ -491,25 +492,171 @@ function IconButton({
 }
 
 function NotificationsButton() {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const q = useNotifications();
+  const items = q.data?.items ?? [];
+  const { unreadCount, markAllRead, markRead } = useUnreadNotifications(items);
+  const showBadge = unreadCount > 0;
+
+  // The tray opening / closing is *not* an acknowledgment. Marking-as-read
+  // only happens on explicit user action (clicking an item, or the
+  // "Mark all read" button). This keeps the badge honest about what's
+  // actually waiting for the user.
+  function handleOpenChange(next: boolean) {
+    setOpen(next);
+  }
+
+  function handleItemClick(n: AppNotification) {
+    setOpen(false);
+    markRead(n.id);
+    if (n.href) navigate(n.href);
+  }
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
-          aria-label="Notifications"
+          aria-label={
+            showBadge ? `Notifications, ${unreadCount} unread` : "Notifications"
+          }
           title="Notifications"
-          className="grid h-9 w-9 place-items-center rounded-md text-muted-foreground hover:bg-white/60 hover:text-foreground transition-colors"
+          className="relative grid h-9 w-9 place-items-center rounded-md text-muted-foreground hover:bg-white/60 hover:text-foreground transition-colors"
         >
           <Bell className="h-[18px] w-[18px]" />
+          {showBadge ? (
+            <span
+              aria-hidden
+              className={cn(
+                "absolute -top-0.5 -right-0.5 grid h-4 min-w-[16px] place-items-center rounded-full px-1",
+                "bg-destructive text-[10px] font-bold leading-none text-white shadow-sm tabular-nums",
+              )}
+            >
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          ) : null}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-          You're all caught up.
+      <DropdownMenuContent align="end" className="w-[360px] p-0 overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-3 py-2.5 border-b border-border">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">Notifications</span>
+            {q.data?.total ? (
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground tabular-nums">
+                {q.data.total}
+              </span>
+            ) : null}
+          </div>
+          {unreadCount > 0 ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                markAllRead();
+                // Force a re-read by closing and reopening; or just toggle a
+                // local state. Simpler: bounce the dropdown closed.
+                setOpen(false);
+              }}
+              className="text-[11px] font-medium text-primary hover:underline"
+            >
+              Mark all read
+            </button>
+          ) : null}
+        </div>
+
+        <div className="max-h-[480px] overflow-y-auto scrollbar-thin">
+          {q.isLoading ? (
+            <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+              Loading…
+            </div>
+          ) : items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center text-sm text-muted-foreground">
+              <BellOff className="h-5 w-5 opacity-60" />
+              <div className="font-medium text-foreground">You're all caught up</div>
+              <div className="text-xs">Nothing needs your attention right now.</div>
+            </div>
+          ) : (
+            <ul className="divide-y divide-border">
+              {items.map((n) => (
+                <NotificationItem key={n.id} n={n} onClick={handleItemClick} />
+              ))}
+            </ul>
+          )}
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function NotificationItem({
+  n,
+  onClick,
+}: {
+  n: AppNotification;
+  onClick: (n: AppNotification) => void;
+}) {
+  const Icon =
+    n.severity === "success"
+      ? CheckCircle2
+      : n.severity === "warning"
+        ? AlertTriangle
+        : Bell;
+  const iconClass =
+    n.severity === "success"
+      ? "text-success"
+      : n.severity === "warning"
+        ? "text-amber-600"
+        : "text-primary";
+
+  let when = "";
+  try {
+    when = formatDistanceToNowStrict(parseISO(n.timestamp), { addSuffix: true });
+  } catch {
+    when = "";
+  }
+
+  const interactive = Boolean(n.href);
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onClick(n)}
+        disabled={!interactive}
+        className={cn(
+          "w-full text-left flex items-start gap-3 px-3 py-3 transition-colors",
+          interactive
+            ? "hover:bg-muted/60 cursor-pointer"
+            : "cursor-default",
+        )}
+      >
+        <span
+          className={cn(
+            "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-muted",
+            iconClass,
+          )}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="truncate text-sm font-medium text-foreground">
+              {n.title}
+            </p>
+            {when ? (
+              <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                {when}
+              </span>
+            ) : null}
+          </div>
+          {n.description ? (
+            <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+              {n.description}
+            </p>
+          ) : null}
+        </div>
+      </button>
+    </li>
   );
 }
 
@@ -529,7 +676,7 @@ function HelpButton() {
         <DropdownMenuLabel>Need help?</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <a href="mailto:support@acme.com">
+          <a href={SUPPORT_MAILTO}>
             <LifeBuoy className="h-4 w-4" />
             Contact support
           </a>

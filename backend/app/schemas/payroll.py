@@ -44,6 +44,22 @@ class SalaryStructureUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class ApplyTemplateRequest(BaseModel):
+    """Request body for materializing a salary template onto an employee.
+
+    `ctc_annual` and `basic_monthly` are optional overrides — by default the
+    template's own CTC is used and `basic_monthly` is derived from the BASIC
+    component line. Pass them explicitly only when an individual employee's
+    package differs from the template baseline.
+    """
+
+    employee_id: int
+    template_id: int
+    effective_from: date
+    ctc_annual: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
+    basic_monthly: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
+
+
 class SalaryStructureOut(ORMModel):
     id: int
     employee_id: int
@@ -113,3 +129,15 @@ class PayslipOut(ORMModel):
     run_id: int
     file_key: Optional[str] = None
     generated_at: Optional[datetime] = None
+
+
+class LatestPayslipOut(BaseModel):
+    """Compact summary of an employee's most recent finalized (paid) payslip,
+    for the employee dashboard. Employee-accessible (unlike the HR-only run)."""
+    run_id: int
+    payroll_detail_id: int
+    period_year: int
+    period_month: int
+    net_pay: float
+    status: str
+    paid_on: Optional[datetime] = None

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.config import settings
 from app.core.exceptions import ConflictError, DomainError, NotFoundError
-from app.core.time import utcnow_naive
+from app.core.time import to_app_tz, utcnow_naive
 from app.models.attendance import AttendanceDaily, AttendanceLog
 from app.models.employee import Employee
 from app.models.enums import (
@@ -31,6 +31,7 @@ from app.models.leave import LeaveRequest
 from app.models.payroll import PayrollRun
 from app.models.user import User
 from app.schemas.attendance import AttendanceSummary, TodayStatus
+from app.services import shift_service
 
 
 # ---------------- Helpers ----------------
@@ -79,7 +80,7 @@ def punch(
     if last and last.type == punch_type:
         raise ConflictError(
             f"Cannot punch {punch_type.value} — last punch was already {punch_type.value} at "
-            f"{last.timestamp.strftime('%H:%M')}."
+            f"{to_app_tz(last.timestamp).strftime('%H:%M')}."
         )
     if punch_type == PunchType.OUT and (last is None or last.type != PunchType.IN):
         raise ConflictError("Cannot punch OUT before punching IN.")
@@ -179,24 +180,62 @@ def recompute_daily(db: Session, employee_id: int, day: date) -> AttendanceDaily
     row.worked_minutes = max(0, worked)
     row.has_missing_punch = has_missing
 
-    workday_start = _parse_workday_start()
-    row.is_late = bool(row.first_in and row.first_in.time() > workday_start)
+    # Resolve the employee's working shift; fall back to the global policy when
+    # no shift is configured (keeps pre-shift installs working).
+    shift = shift_service.resolve_employee_shift(db, employee_id)
+    if shift is not None:
+        shift_start = shift.start_time
+        grace = shift.grace_minutes or 0
+        shift_end = shift.end_time
+        full_day = shift.full_day_minutes
+        half_day = shift.half_day_minutes
+        weekly_offs = set(shift.weekly_offs or [])
+    else:
+        shift_start = _parse_workday_start()
+        grace = 0
+        shift_end = None
+        full_day = settings.FULL_DAY_MINUTES
+        half_day = settings.HALF_DAY_MINUTES
+        weekly_offs = set(settings.WEEKEND_DAYS)
+
+    # All clock comparisons use the local (business-tz) wall clock, since shift
+    # times are local and punches are stored as UTC.
+    first_in_local = to_app_tz(row.first_in)
+    late_cutoff = (datetime.combine(day, shift_start) + timedelta(minutes=grace)).time()
+    row.is_late = bool(first_in_local and first_in_local.time() > late_cutoff)
+
+    # Early checkout: clocked out before the shift end (only when an OUT exists).
+    last_out_local = to_app_tz(row.last_out)
+    row.is_early_leave = bool(shift_end and last_out_local and last_out_local.time() < shift_end)
 
     on_leave = _is_on_leave(db, employee_id, day)
     is_hol = _is_holiday(db, day)
+    is_off = day.weekday() in weekly_offs
 
     if on_leave:
         row.status = AttendanceStatus.ON_LEAVE
     elif is_hol:
         row.status = AttendanceStatus.HOLIDAY
-    elif _is_weekend(day):
+    elif is_off:
         row.status = AttendanceStatus.WEEKEND
-    elif row.worked_minutes >= settings.FULL_DAY_MINUTES:
+    elif row.worked_minutes >= full_day:
         row.status = AttendanceStatus.PRESENT
-    elif row.worked_minutes >= settings.HALF_DAY_MINUTES:
+    elif row.worked_minutes >= half_day:
         row.status = AttendanceStatus.HALF_DAY
     elif logs:
-        row.status = AttendanceStatus.PRESENT  # short day — present, but worked_minutes reflects actual
+        # "Showed up but worked under half-day threshold → half day" credit.
+        # Important: only apply this once the day is *settled* — i.e. it's a
+        # past day, or today with a closing OUT punch. For an open shift
+        # in-progress today (only INs so far, worked_minutes = 0), keep the
+        # day as ABSENT until the punches are paired or the day rolls over.
+        # Otherwise a bare morning punch-IN would silently bump payroll
+        # `present_days` by 0.5 before any real work has been done.
+        last_punch_is_out = logs[-1].type == PunchType.OUT
+        is_today = day == utcnow_naive().date()
+        if last_punch_is_out or not is_today:
+            row.status = AttendanceStatus.HALF_DAY
+        else:
+            row.status = AttendanceStatus.ABSENT
     else:
         row.status = AttendanceStatus.ABSENT
     db.flush()
@@ -318,4 +357,5 @@ def today_status(db: Session, *, employee_id: int) -> TodayStatus:
         last_out=row.last_out,
         worked_minutes=row.worked_minutes,
         status=row.status,
+        is_late=row.is_late,
     )

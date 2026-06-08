@@ -3,6 +3,7 @@ import {
   AreaChart,
   Bar,
   BarChart,
+  CartesianGrid,
   Cell,
   Pie,
   PieChart,
@@ -71,6 +72,13 @@ export function DonutChart({
   className?: string;
 }) {
   const hasData = data.some((d) => d.value > 0);
+  // Inner radius (as a percent of the pie radius) — keep in sync with the
+  // <Pie> prop below so the centered content is sized to the actual hole.
+  const innerRadiusPct = 100 - thickness - 30;
+  // Diameter of the inner hole, expressed relative to the chart height. The
+  // pie always renders as a circle inscribed in the smaller dimension, so for
+  // typical donut layouts the height *is* the limiting dimension.
+  const holeSize = (innerRadiusPct / 100) * height;
   return (
     <div className={cn("relative", className)} style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -79,7 +87,7 @@ export function DonutChart({
             data={hasData ? data : [{ name: "No data", value: 1, color: "hsl(var(--muted))" }]}
             dataKey="value"
             nameKey="name"
-            innerRadius={`${100 - thickness - 30}%`}
+            innerRadius={`${innerRadiusPct}%`}
             outerRadius="100%"
             paddingAngle={hasData ? 2 : 0}
             stroke="none"
@@ -92,8 +100,17 @@ export function DonutChart({
         </PieChart>
       </ResponsiveContainer>
       {center ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          {center}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          {/* Pin to the inner hole's geometry — square box, sized to the
+              actual diameter (in pixels), with a small padding so the text
+              never kisses the ring. Any overflow is hidden rather than
+              spilling out of the donut. */}
+          <div
+            className="flex flex-col items-center justify-center overflow-hidden text-center px-1"
+            style={{ width: holeSize, height: holeSize }}
+          >
+            {center}
+          </div>
         </div>
       ) : null}
     </div>
@@ -135,6 +152,62 @@ export function MiniBars({
           <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={48}>
             {data.map((d, i) => (
               <Cell key={i} fill={d.color || color} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** Per-category vertical bars where each bar carries its own colour. Gridlines
+ * + axes give it the same polish as the payroll chart. Good for daily series
+ * (e.g. attendance hours per day, coloured by status). */
+export function ColoredBars({
+  data,
+  height = 200,
+  yFormatter,
+  valueFormatter,
+  xInterval,
+  maxBarSize = 22,
+  unit,
+}: {
+  data: Array<{ name: string; value: number; color?: string; label?: string }>;
+  height?: number;
+  yFormatter?: (v: number) => string;
+  valueFormatter?: (v: number) => string;
+  xInterval?: number;
+  maxBarSize?: number;
+  unit?: string;
+}) {
+  return (
+    <div style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 8, right: 6, left: -14, bottom: 0 }} barCategoryGap="18%">
+          <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
+          <XAxis
+            dataKey="name"
+            interval={xInterval}
+            tickLine={false}
+            axisLine={{ stroke: "hsl(var(--border))" }}
+            tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+            minTickGap={2}
+          />
+          <YAxis
+            tickLine={false}
+            axisLine={false}
+            width={34}
+            allowDecimals={false}
+            tickFormatter={yFormatter}
+            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+          />
+          <Tooltip
+            cursor={{ fill: "hsl(var(--muted) / 0.4)" }}
+            content={<ChartTooltip valueFormatter={valueFormatter} showLabel />}
+          />
+          <Bar dataKey="value" name={unit ?? "Value"} radius={[3, 3, 0, 0]} maxBarSize={maxBarSize}>
+            {data.map((d, i) => (
+              <Cell key={i} fill={d.color || CHART_COLORS[0]} />
             ))}
           </Bar>
         </BarChart>

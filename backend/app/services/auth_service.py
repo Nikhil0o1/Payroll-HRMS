@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.config import settings
+from app.core.email_policy import assert_email_domain_allowed
 from app.core.exceptions import ConflictError, DomainError, NotFoundError
 from app.core.time import utcnow_naive
 from app.core.security import (
+    create_step_up_token,
     create_access_token,
     generate_refresh_token,
     hash_password,
@@ -77,6 +79,7 @@ def signup_employee(
     from app.services import employee_service, leave_service
 
     email = email.lower().strip()
+    assert_email_domain_allowed(email)
 
     if db.scalar(select(User).where(User.email == email)):
         raise ConflictError("An account with this email already exists")
@@ -152,7 +155,11 @@ def _cleanup_refresh_tokens(db: Session, user_id: int) -> None:
 
 
 def authenticate(db: Session, email: str, password: str, ip: Optional[str] = None) -> tuple[User, str, str]:
-    user = db.scalar(select(User).where(User.email == email.lower().strip()))
+    email = email.lower().strip()
+    # Reject off-domain addresses up-front (when an allow-list is configured)
+    # — same friendly 422 the signup flow uses, no DB lookup needed.
+    assert_email_domain_allowed(email)
+    user = db.scalar(select(User).where(User.email == email))
 
     # Temporary lockout after repeated failures (brute-force mitigation).
     if user and user.locked_until and user.locked_until > utcnow_naive():
@@ -227,6 +234,35 @@ def change_password(
     db.commit()
 
 
+def issue_step_up_token(
+    db: Session, user: User, password: str, purpose: str, ip: Optional[str] = None
+) -> str:
+    if not verify_password(password, user.hashed_password):
+        record_audit(
+            db,
+            actor=user,
+            action="auth.step_up_failed",
+            entity="users",
+            entity_id=user.id,
+            ip=ip,
+            after={"purpose": purpose},
+        )
+        db.commit()
+        raise DomainError("Password is incorrect", status_code=401)
+    token = create_step_up_token(user.id, purpose, extra={"email": user.email})
+    record_audit(
+        db,
+        actor=user,
+        action="auth.step_up",
+        entity="users",
+        entity_id=user.id,
+        ip=ip,
+        after={"purpose": purpose},
+    )
+    db.commit()
+    return token
+
+
 def get_or_create_role(db: Session, name: RoleName, description: Optional[str] = None) -> Role:
     role = db.scalar(select(Role).where(Role.name == name))
     if role:
@@ -247,6 +283,7 @@ def create_user(
     actor: Optional[User] = None,
 ) -> User:
     email = email.lower().strip()
+    assert_email_domain_allowed(email)
     if db.scalar(select(User).where(User.email == email)):
         raise ConflictError(f"User with email {email} already exists")
     role_row = get_or_create_role(db, role)

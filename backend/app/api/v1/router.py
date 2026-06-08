@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    announcements,
     attendance,
     audit,
     auth,
@@ -11,11 +12,13 @@ from app.api.v1 import (
     employees,
     holidays,
     leaves,
+    notifications,
     payroll,
     regularizations,
     reports,
     salary,
     settings,
+    shifts,
 )
 
 api_v1_router = APIRouter()
@@ -31,3 +34,6 @@ api_v1_router.include_router(reports.router)
 api_v1_router.include_router(audit.router)
 api_v1_router.include_router(dashboard.router)
 api_v1_router.include_router(settings.router)
+api_v1_router.include_router(shifts.router)
+api_v1_router.include_router(announcements.router)
+api_v1_router.include_router(notifications.router)

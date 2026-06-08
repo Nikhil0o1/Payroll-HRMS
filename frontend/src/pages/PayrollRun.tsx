@@ -1,8 +1,11 @@
+import { Fragment, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import {
   ArrowLeft,
+  ChevronDown,
+  ChevronRight,
   Download,
   Lock,
   RefreshCw,
@@ -33,7 +36,7 @@ import {
 import { SimpleTooltip } from "@/components/ui/tooltip";
 import { PayrollStatusBadge } from "@/components/status-badge";
 import { api, apiErrorMessage } from "@/lib/api";
-import { formatCurrency, monthLabel } from "@/lib/utils";
+import { cn, formatCompactCurrency, formatCurrency, monthLabel } from "@/lib/utils";
 import { rolesAtLeast, useAuthStore } from "@/stores/auth";
 import type { PayrollRun } from "@/types/api";
 
@@ -43,6 +46,8 @@ export function PayrollRunPage() {
   const qc = useQueryClient();
   const me = useAuthStore((s) => s.me);
   const isSuper = rolesAtLeast(me?.role, "SUPER_ADMIN");
+
+  const [expanded, setExpanded] = useState<number | null>(null);
 
   const q = useQuery({
     queryKey: ["payroll", "run", runId],
@@ -241,10 +246,15 @@ export function PayrollRunPage() {
               data={donutData}
               valueFormatter={(v) => formatCurrency(v)}
               center={
-                <div className="text-center">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Gross</p>
-                  <p className="text-lg font-semibold tabular-nums">{formatCurrency(grossNum)}</p>
-                </div>
+                <>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Gross</p>
+                  <p
+                    className="text-base font-semibold tabular-nums leading-tight"
+                    title={formatCurrency(grossNum)}
+                  >
+                    {formatCompactCurrency(grossNum)}
+                  </p>
+                </>
               }
             />
             <div className="mt-4 space-y-2">
@@ -271,6 +281,7 @@ export function PayrollRunPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8" />
                   <TableHead>Employee</TableHead>
                   <TableHead className="text-right">Working / Payable</TableHead>
                   <TableHead className="text-right">LOP</TableHead>
@@ -282,59 +293,144 @@ export function PayrollRunPage() {
               </TableHeader>
               <TableBody>
                 {details.length === 0 ? (
-                  <TableEmpty colSpan={7} message="No employees in this run." />
+                  <TableEmpty colSpan={8} message="No employees in this run." />
                 ) : (
-                  details.map((d) => (
-                    <TableRow key={d.id}>
-                      <TableCell>
-                        <div className="font-medium leading-tight">
-                          {d.employee_name ?? `#${d.employee_id}`}
-                        </div>
-                        {d.employee_code ? (
-                          <div className="font-mono text-xs text-muted-foreground">
-                            {d.employee_code}
-                          </div>
+                  details.map((d) => {
+                    const open = expanded === d.id;
+                    return (
+                      <Fragment key={d.id}>
+                        <TableRow
+                          className="cursor-pointer"
+                          onClick={() => setExpanded(open ? null : d.id)}
+                        >
+                          <TableCell className="text-muted-foreground">
+                            {open ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <div className="font-medium leading-tight">
+                              {d.employee_name ?? `#${d.employee_id}`}
+                            </div>
+                            {d.employee_code ? (
+                              <div className="font-mono text-xs text-muted-foreground">
+                                {d.employee_code}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-muted-foreground">
+                            {d.working_days} /{" "}
+                            <span className="font-semibold text-foreground">{d.payable_days}</span>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {d.lop_days > 0 ? (
+                              <span className="text-destructive">{d.lop_days}</span>
+                            ) : (
+                              <span className="text-muted-foreground">0</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(d.gross)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-muted-foreground">
+                            {formatCurrency(d.total_deductions)}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold tabular-nums text-success">
+                            {formatCurrency(d.net_pay)}
+                          </TableCell>
+                          <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                            {run.status === "LOCKED" ? (
+                              <SimpleTooltip label="Download payslip">
+                                <Button
+                                  size="icon-sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    downloadSlip(
+                                      d.id,
+                                      `${run.period_year}_${run.period_month}_${d.employee_code ?? d.employee_id}`,
+                                    )
+                                  }
+                                  aria-label="Download payslip"
+                                >
+                                  <Download className="h-4 w-4" />
+                                </Button>
+                              </SimpleTooltip>
+                            ) : (
+                              // Payslips become available only after the run
+                              // is LOCKED. Show a muted lock badge so the
+                              // column doesn't go empty (avoids reflow when
+                              // the run is later locked), with a tooltip
+                              // explaining the current state.
+                              <SimpleTooltip
+                                label={`Payslip available after the run is locked (currently ${run.status.toLowerCase()})`}
+                              >
+                                <span className="inline-grid h-8 w-8 place-items-center rounded-md border border-dashed border-border text-muted-foreground/60">
+                                  <Lock className="h-3.5 w-3.5" />
+                                </span>
+                              </SimpleTooltip>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        {open ? (
+                          <TableRow className="bg-muted/20 hover:bg-muted/20">
+                            <TableCell colSpan={8} className="p-0">
+                              <div className="grid gap-5 p-4 md:grid-cols-3">
+                                <BreakdownCol title="Attendance">
+                                  <KV label="Working days (month)" value={fmtDays(d.working_days)} />
+                                  <KV label="Present" value={fmtDays(d.present_days)} />
+                                  <KV label="Paid leave" value={fmtDays(d.paid_leave_days)} />
+                                  <KV
+                                    label="LOP (absent)"
+                                    value={fmtDays(d.lop_days)}
+                                    tone={d.lop_days > 0 ? "danger" : undefined}
+                                  />
+                                  <KV label="Payable days" value={fmtDays(d.payable_days)} strong border />
+                                </BreakdownCol>
+
+                                <BreakdownCol title="Earnings">
+                                  {d.earnings.map((e) => (
+                                    <KV key={e.code} label={e.name} value={formatCurrency(e.amount)} />
+                                  ))}
+                                  <KV label="Gross" value={formatCurrency(d.gross)} strong border />
+                                </BreakdownCol>
+
+                                <BreakdownCol title="Deductions">
+                                  {d.deductions.length ? (
+                                    d.deductions.map((dd) => (
+                                      <KV key={dd.code} label={dd.name} value={formatCurrency(dd.amount)} />
+                                    ))
+                                  ) : (
+                                    <p className="py-1 text-xs text-muted-foreground">No deductions</p>
+                                  )}
+                                  <KV
+                                    label="Total deductions"
+                                    value={formatCurrency(d.total_deductions)}
+                                    border
+                                  />
+                                  <KV
+                                    label="Net pay"
+                                    value={formatCurrency(d.net_pay)}
+                                    strong
+                                    tone="success"
+                                  />
+                                </BreakdownCol>
+                              </div>
+                              <p className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
+                                Each component is pro-rated by{" "}
+                                <span className="font-medium text-foreground">
+                                  payable ÷ working days = {fmtDays(d.payable_days)} ÷{" "}
+                                  {fmtDays(d.working_days)}
+                                </span>
+                                . Net pay = gross − total deductions.
+                              </p>
+                            </TableCell>
+                          </TableRow>
                         ) : null}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {d.working_days} /{" "}
-                        <span className="font-semibold text-foreground">{d.payable_days}</span>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {d.lop_days > 0 ? (
-                          <span className="text-destructive">{d.lop_days}</span>
-                        ) : (
-                          <span className="text-muted-foreground">0</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatCurrency(d.gross)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {formatCurrency(d.total_deductions)}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums text-success">
-                        {formatCurrency(d.net_pay)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <SimpleTooltip label="Download payslip">
-                          <Button
-                            size="icon-sm"
-                            variant="outline"
-                            onClick={() =>
-                              downloadSlip(
-                                d.id,
-                                `${run.period_year}_${run.period_month}_${d.employee_code ?? d.employee_id}`,
-                              )
-                            }
-                            aria-label="Download payslip"
-                          >
-                            <Download className="h-4 w-4" />
-                          </Button>
-                        </SimpleTooltip>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                      </Fragment>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -351,6 +447,57 @@ function LegendRow({ color, label, value }: { color: string; label: string; valu
       <span className="h-2.5 w-2.5 rounded-[3px]" style={{ backgroundColor: color }} />
       <span className="text-muted-foreground">{label}</span>
       <span className="ml-auto font-semibold tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/** Days as a compact string (keeps 0.5 for half days). */
+function fmtDays(n: number): string {
+  return String(n);
+}
+
+function BreakdownCol({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+      </p>
+      <div className="space-y-0.5">{children}</div>
+    </div>
+  );
+}
+
+function KV({
+  label,
+  value,
+  strong,
+  border,
+  tone,
+}: {
+  label: string;
+  value: React.ReactNode;
+  strong?: boolean;
+  border?: boolean;
+  tone?: "danger" | "success";
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3 py-0.5 text-sm",
+        border && "mt-1 border-t border-border pt-1.5",
+      )}
+    >
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={cn(
+          "tabular-nums",
+          strong ? "font-semibold" : "font-medium",
+          tone === "danger" && "text-destructive",
+          tone === "success" && "text-success",
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }

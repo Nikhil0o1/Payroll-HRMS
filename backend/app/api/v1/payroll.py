@@ -19,6 +19,7 @@ from app.core.storage import get_storage
 from app.models.user import User
 from app.schemas.common import Message, Page
 from app.schemas.payroll import (
+    LatestPayslipOut,
     PayrollRunCreate,
     PayrollRunDetailed,
     PayrollRunOut,
@@ -90,6 +91,15 @@ def my_payslips(db: Session = Depends(get_db), current: User = Depends(get_curre
     if current.employee_id is None:
         raise HTTPException(status_code=400, detail="No employee linked to this account")
     return [PayslipOut.model_validate(p) for p in payroll_service.employee_payslips(db, current.employee_id)]
+
+
+@router.get("/payslips/me/latest", response_model=Optional[LatestPayslipOut])
+def my_latest_payslip(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    """Compact summary of the signed-in employee's latest finalized payslip
+    (net pay + pay date) for the dashboard. Returns null when none exists."""
+    if current.employee_id is None:
+        raise HTTPException(status_code=400, detail="No employee linked to this account")
+    return payroll_service.latest_payslip_summary(db, current.employee_id)
 
 
 @router.get("/payslips/by-employee/{employee_id}", response_model=list[PayslipOut])

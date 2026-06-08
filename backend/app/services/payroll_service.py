@@ -23,17 +23,21 @@ from app.models.enums import (
     CalcType,
     ComponentType,
     EmployeeStatus,
+    LeaveStatus,
     PayrollStatus,
 )
 from app.models.holiday import Holiday
+from app.models.leave import LeaveRequest, LeaveType
+from app.models.organization import OrganizationProfile, SalaryComponentDef, SalaryTemplate
 from app.models.payroll import PayrollDetail, PayrollRun, Payslip, SalaryStructure
 from app.models.user import User
 from app.schemas.payroll import (
+    ApplyTemplateRequest,
     PayrollRunCreate,
     SalaryStructureCreate,
     SalaryStructureUpdate,
 )
-from app.services import attendance_service
+from app.services import attendance_service, shift_service
 
 logger = logging.getLogger("hrms")
 
@@ -100,6 +104,180 @@ def create_structure(db: Session, payload: SalaryStructureCreate, actor: User) -
     return s
 
 
+# Salary component categories (defined in `salary_component_defs`) don't map
+# 1:1 to the EARNING/DEDUCTION enum used by the payroll engine. This mapping
+# is the single point of truth for translating a *catalog* component into a
+# *structure* component. Reimbursements are paid out to the employee, so they
+# count as earnings on the payslip.
+_CATEGORY_TO_TYPE: dict[str, ComponentType] = {
+    "EARNING": ComponentType.EARNING,
+    "REIMBURSEMENT": ComponentType.EARNING,
+    "DEDUCTION": ComponentType.DEDUCTION,
+}
+
+
+def _compute_basic_monthly(annual_ctc: float, lines: list[dict]) -> float:
+    """Best-effort BASIC monthly amount from a template's component lines.
+
+    The structure stores ``basic_monthly`` separately so PERCENT_OF_BASIC items
+    have an anchor at runtime. Templates encode BASIC as a regular component
+    (typically PERCENT_OF_CTC=50). We compute its monthly amount here so the
+    derived structure stays mathematically consistent with the template.
+    Falls back to 0 (resolver will then default to 50% of monthly CTC).
+    """
+    monthly_ctc = float(annual_ctc) / 12.0 if annual_ctc else 0.0
+    for raw in lines:
+        if (raw.get("code") or "").upper() != "BASIC":
+            continue
+        calc = (raw.get("calc") or raw.get("calc_type") or "").upper()
+        value = float(raw.get("value") or 0)
+        if calc == "FIXED":
+            return value
+        if calc == "PERCENT_OF_CTC":
+            return monthly_ctc * value / 100.0
+        # PERCENT_OF_BASIC for the BASIC component itself is nonsensical.
+    return 0.0
+
+
+def apply_template_to_employee(
+    db: Session,
+    payload: ApplyTemplateRequest,
+    actor: User,
+) -> SalaryStructure:
+    """Materialize a salary template into a versioned structure for one employee.
+
+    Looks up each template line in the salary component catalog to determine its
+    EARNING/DEDUCTION type (templates only carry ``calc_type`` and ``value``;
+    they don't repeat the component category). The resulting structure is a
+    standalone snapshot — future edits to the template do not retroactively
+    change historical pay.
+    """
+    emp = db.get(Employee, payload.employee_id)
+    if not emp:
+        raise NotFoundError("Employee not found")
+
+    template = db.get(SalaryTemplate, payload.template_id)
+    if template is None:
+        raise NotFoundError("Salary template not found")
+    if not template.is_active:
+        raise DomainError(
+            f"Template '{template.name}' is inactive and can't be applied.",
+            status_code=400,
+        )
+    template_lines: list[dict] = list(template.components or [])
+    if not template_lines:
+        raise DomainError(
+            f"Template '{template.name}' has no components configured.",
+            status_code=400,
+        )
+
+    # Look up component categories in one round-trip.
+    codes = [(line.get("code") or "").upper() for line in template_lines if line.get("code")]
+    defs_by_code: dict[str, SalaryComponentDef] = {
+        d.code: d
+        for d in db.scalars(
+            select(SalaryComponentDef).where(SalaryComponentDef.code.in_(codes))
+        )
+    }
+    missing = sorted({c for c in codes if c not in defs_by_code})
+    if missing:
+        raise DomainError(
+            "Template references components that no longer exist in the catalog: "
+            + ", ".join(missing),
+            status_code=400,
+        )
+
+    structure_components: list[dict] = []
+    for line in template_lines:
+        code = (line.get("code") or "").upper()
+        comp_def = defs_by_code[code]
+        ctype = _CATEGORY_TO_TYPE.get(comp_def.category)
+        if ctype is None:
+            raise DomainError(
+                f"Component '{code}' has unsupported category {comp_def.category!r}.",
+                status_code=400,
+            )
+        calc_raw = (line.get("calc_type") or "FIXED").upper()
+        try:
+            calc = CalcType(calc_raw)
+        except ValueError as exc:
+            raise DomainError(
+                f"Component '{code}' has invalid calc_type {calc_raw!r}.",
+                status_code=400,
+            ) from exc
+        structure_components.append(
+            {
+                "code": code,
+                "name": line.get("name") or comp_def.name,
+                "type": ctype.value,
+                "calc": calc.value,
+                "value": float(line.get("value") or 0),
+            }
+        )
+
+    # Resolve annual CTC. Order:
+    #   1. Explicit caller override (per-employee CTC tweak).
+    #   2. Template's stored CTC.
+    #   3. Inferred from FIXED earning components (sum × 12). This makes simple
+    #      templates like "Intern → BASIC FIXED 20000" work without needing
+    #      the admin to also set CTC explicitly on the template.
+    annual_ctc: float = 0.0
+    if payload.ctc_annual is not None and payload.ctc_annual > 0:
+        annual_ctc = float(payload.ctc_annual)
+    elif template.annual_ctc and float(template.annual_ctc) > 0:
+        annual_ctc = float(template.annual_ctc)
+    else:
+        inferred_monthly = sum(
+            float(c.get("value") or 0)
+            for c in structure_components
+            if c.get("type") == ComponentType.EARNING.value and c.get("calc") == CalcType.FIXED.value
+        )
+        annual_ctc = inferred_monthly * 12.0
+
+    basic_monthly = (
+        float(payload.basic_monthly)
+        if payload.basic_monthly is not None
+        else _compute_basic_monthly(annual_ctc, template_lines)
+    )
+
+    # Deactivate any currently-active structure (mirrors create_structure).
+    for s in db.scalars(
+        select(SalaryStructure).where(
+            SalaryStructure.employee_id == payload.employee_id,
+            SalaryStructure.is_active.is_(True),
+        )
+    ):
+        s.is_active = False
+
+    structure = SalaryStructure(
+        employee_id=payload.employee_id,
+        effective_from=payload.effective_from,
+        ctc_annual=annual_ctc,
+        basic_monthly=basic_monthly,
+        components=structure_components,
+        is_active=True,
+    )
+    db.add(structure)
+    db.flush()
+    record_audit(
+        db,
+        actor=actor,
+        action="salary.apply_template",
+        entity="salary_structures",
+        entity_id=structure.id,
+        after={
+            "employee_id": structure.employee_id,
+            "template_id": template.id,
+            "template_name": template.name,
+            "ctc_annual": float(structure.ctc_annual),
+            "components": structure_components,
+        },
+    )
+    db.commit()
+    db.refresh(structure)
+    return structure
+
+
 def update_structure(db: Session, structure_id: int, payload: SalaryStructureUpdate, actor: User) -> SalaryStructure:
     s = db.get(SalaryStructure, structure_id)
     if not s:
@@ -133,9 +311,32 @@ def _round(value: float) -> float:
     return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
-def _working_days(db: Session, year: int, month: int) -> int:
-    """Calendar days in month minus weekends and public holidays."""
-    last = monthrange(year, month)[1]
+def _employee_weekly_offs(db: Session, employee_id: int) -> set[int]:
+    """Weekly-off weekday set from the employee's shift (global default if none)."""
+    shift = shift_service.resolve_employee_shift(db, employee_id)
+    if shift is not None:
+        return set(shift.weekly_offs or [])
+    return set(settings.WEEKEND_DAYS)
+
+
+def _working_days(
+    db: Session,
+    year: int,
+    month: int,
+    weekly_offs: set[int],
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+) -> int:
+    """Working days in the month (calendar days minus weekly offs and public
+    holidays). An optional [start, end] sub-range restricts the count to the
+    days an employee was actually employed (joiner/leaver proration). Weekly
+    offs and holidays are always excluded — only true working days can be LOP."""
+    period_first = date(year, month, 1)
+    period_last = date(year, month, monthrange(year, month)[1])
+    start = max(start, period_first) if start else period_first
+    end = min(end, period_last) if end else period_last
+    if start > end:
+        return 0
     holidays = {
         h.date
         for h in db.scalars(
@@ -145,25 +346,24 @@ def _working_days(db: Session, year: int, month: int) -> int:
         )
     }
     count = 0
-    for d in range(1, last + 1):
-        day = date(year, month, d)
-        if day.weekday() in settings.WEEKEND_DAYS:
-            continue
-        if day in holidays:
-            continue
-        count += 1
+    d = start
+    while d <= end:
+        if d.weekday() not in weekly_offs and d not in holidays:
+            count += 1
+        d += timedelta(days=1)
     return count
 
 
-def _attendance_for_employee(
-    db: Session, employee_id: int, year: int, month: int
-) -> Tuple[float, float, float]:
-    """Return (present_days, paid_leave_days, lop_days) for a working month."""
-    last = monthrange(year, month)[1]
-    start = date(year, month, 1)
-    end = date(year, month, last)
+def _attendance_present_leave(
+    db: Session, employee_id: int, start: date, end: date
+) -> Tuple[float, float]:
+    """Return (present_days, paid_leave_days) within [start, end], derived from
+    attendance *status* (after shift rules in recompute_daily): PRESENT=1,
+    HALF_DAY=0.5, ON_LEAVE counts as paid leave."""
+    if start > end:
+        return 0.0, 0.0
 
-    # Make sure the daily projection is up to date for that month.
+    # Make sure the daily projection is up to date (only up to today).
     d = start
     today = utcnow_naive().date()
     upper = min(end, today)
@@ -189,10 +389,60 @@ def _attendance_for_employee(
             present_days += 0.5
         elif r.status == AttendanceStatus.ON_LEAVE:
             paid_leave += 1
-    working = float(_working_days(db, year, month))
-    accounted = present_days + paid_leave
-    lop = max(0.0, working - accounted)
-    return present_days, paid_leave, lop
+    return present_days, paid_leave
+
+
+def _org_lop_policy(db: Session) -> str:
+    """Org LOP policy: 'attendance' (pay for present + leave) or 'exception'
+    (pay full salary, deduct only approved unpaid leave). Defaults to attendance."""
+    p = db.scalar(select(OrganizationProfile).order_by(OrganizationProfile.id).limit(1))
+    return (getattr(p, "lop_policy", None) or "attendance") if p else "attendance"
+
+
+def _unpaid_leave_working_days(
+    db: Session, employee_id: int, start: date, end: date, weekly_offs: set[int]
+) -> float:
+    """Working days (excluding weekly offs & holidays) the employee was on an
+    *approved, unpaid* leave within [start, end]. Used by the 'exception' LOP
+    policy — these are the only days that reduce pay."""
+    if start > end:
+        return 0.0
+    holidays = {
+        h.date
+        for h in db.scalars(
+            select(Holiday).where(
+                Holiday.year == start.year, func.extract("month", Holiday.date) == start.month
+            )
+        )
+    }
+    reqs = list(
+        db.scalars(
+            select(LeaveRequest)
+            .join(LeaveType, LeaveType.id == LeaveRequest.leave_type_id)
+            .where(
+                LeaveRequest.employee_id == employee_id,
+                LeaveRequest.status == LeaveStatus.APPROVED,
+                LeaveType.is_paid.is_(False),
+                LeaveRequest.start_date <= end,
+                LeaveRequest.end_date >= start,
+            )
+        )
+    )
+    total = 0.0
+    for r in reqs:
+        s = max(r.start_date, start)
+        e = min(r.end_date, end)
+        wd = 0
+        d = s
+        while d <= e:
+            if d.weekday() not in weekly_offs and d not in holidays:
+                wd += 1
+            d += timedelta(days=1)
+        if r.half_day:
+            total += 0.5 if wd >= 1 else 0.0
+        else:
+            total += float(wd)
+    return total
 
 
 def _resolve_components(structure: SalaryStructure) -> Tuple[list, list]:
@@ -250,11 +500,37 @@ def compute_employee(
     if not structure:
         return None  # employee has no salary structure → skip
 
-    working = float(_working_days(db, run.period_year, run.period_month))
-    present, paid_leave, lop = _attendance_for_employee(
-        db, employee.id, run.period_year, run.period_month
+    # Employment window within the period (prorates joiners/leavers): only the
+    # days the employee was actually on the rolls count. Someone who joins after
+    # the month or left before it isn't part of this run at all.
+    period_last = date(run.period_year, run.period_month, monthrange(run.period_year, run.period_month)[1])
+    window_start = max(period_first, employee.date_of_joining)
+    window_end = period_last
+    if employee.date_of_exit:
+        window_end = min(window_end, employee.date_of_exit)
+    if window_start > window_end:
+        return None  # not employed during this period
+
+    weekly_offs = _employee_weekly_offs(db, employee.id)
+    # Denominator = full month's working days; numerator = days actually paid.
+    working = float(_working_days(db, run.period_year, run.period_month, weekly_offs))
+    employed_working = float(
+        _working_days(db, run.period_year, run.period_month, weekly_offs, window_start, window_end)
     )
-    payable = max(0.0, working - lop)
+    present, paid_leave = _attendance_present_leave(db, employee.id, window_start, window_end)
+
+    policy = _org_lop_policy(db)
+    if policy == "exception":
+        # Pay full salary; deduct only approved unpaid-leave days. Present/absent
+        # attendance does NOT reduce pay under this policy.
+        lop = min(_unpaid_leave_working_days(db, employee.id, window_start, window_end, weekly_offs), employed_working)
+        payable = max(0.0, employed_working - lop)
+    else:
+        # Attendance-based: pay for days present + (paid) leave. LOP = employed
+        # working days that were neither. Days outside the employment window are
+        # never LOP (joiner/leaver proration).
+        payable = min(present + paid_leave, employed_working)
+        lop = max(0.0, employed_working - payable)
     factor = (payable / working) if working > 0 else 0.0
 
     earnings_full, deductions_full = _resolve_components(structure)
@@ -290,6 +566,9 @@ def compute_employee(
         "components": list(structure.components or []),
         "earnings_full": earnings_full,
         "deductions_full": deductions_full,
+        "lop_policy": policy,
+        "employed_working_days": employed_working,
+        "factor": _round(factor),
     }
     db.flush()
     return detail
@@ -511,6 +790,16 @@ def get_or_generate_payslip(db: Session, *, detail_id: int, actor: Optional[User
     if not detail:
         raise NotFoundError("Payroll detail not found")
 
+    # Payslips are formal artifacts: only emitted once the run is LOCKED
+    # (final, immutable, salaries credited). For DRAFT / REVIEW / APPROVED
+    # runs the numbers can still change on a recompute, so issuing a slip is
+    # both misleading to the employee and a paper-trail liability for HR.
+    if detail.run.status != PayrollStatus.LOCKED:
+        raise ConflictError(
+            "Payslip will be available once the payroll run is locked. "
+            f"Current status: {detail.run.status.value}."
+        )
+
     payslip = db.scalar(select(Payslip).where(Payslip.payroll_detail_id == detail.id))
     if payslip and payslip.file_key and get_storage().exists(payslip.file_key):
         return payslip
@@ -561,6 +850,34 @@ def render_payslip_pdf(detail: PayrollDetail) -> bytes:
             exc.__class__.__name__,
         )
         return html.encode("utf-8")
+
+
+def latest_payslip_summary(db: Session, employee_id: int) -> Optional[dict]:
+    """Most recent *finalized* (LOCKED) payroll detail for an employee, with the
+    net pay and pay date — the data the employee dashboard's payslip card needs.
+    Returns None when the employee has no locked pay run yet."""
+    row = db.execute(
+        select(PayrollDetail, PayrollRun)
+        .join(PayrollRun, PayrollRun.id == PayrollDetail.run_id)
+        .where(
+            PayrollDetail.employee_id == employee_id,
+            PayrollRun.status == PayrollStatus.LOCKED,
+        )
+        .order_by(desc(PayrollRun.period_year), desc(PayrollRun.period_month))
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    detail, run = row
+    return {
+        "run_id": run.id,
+        "payroll_detail_id": detail.id,
+        "period_year": run.period_year,
+        "period_month": run.period_month,
+        "net_pay": float(detail.net_pay),
+        "status": "Paid",
+        "paid_on": run.locked_at,
+    }
 
 
 def employee_payslips(db: Session, employee_id: int) -> list[Payslip]:

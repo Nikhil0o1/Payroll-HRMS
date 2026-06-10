@@ -29,7 +29,12 @@ class Settings(BaseSettings):
     APP_NAME: str = "HRMS Payroll"
     ENVIRONMENT: str = "development"
     API_V1_PREFIX: str = "/api/v1"
-    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    # Allowed browser origins. Stored as a plain string (comma-separated or a
+    # JSON array) and read via the parsed :pyattr:`cors_origins` property. Kept
+    # as `str` — not `List[str]` — so pydantic-settings does NOT try to
+    # json.loads() a bare value like "https://app.vercel.app" at startup, which
+    # would otherwise crash with a JSONDecodeError.
+    BACKEND_CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
     LOG_LEVEL: Optional[str] = None  # default: DEBUG in dev, INFO in prod
     DEFAULT_CURRENCY: str = "INR"
 
@@ -114,7 +119,7 @@ class Settings(BaseSettings):
     # if you prefer to run `python -m app.seed` from a dedicated init job.
     AUTO_BOOTSTRAP_ON_STARTUP: bool = True
 
-    @field_validator("BACKEND_CORS_ORIGINS", "WEEKEND_DAYS", mode="before")
+    @field_validator("WEEKEND_DAYS", mode="before")
     @classmethod
     def _split_list(cls, v):
         # Allow comma-separated env values in addition to JSON arrays.
@@ -137,7 +142,7 @@ class Settings(BaseSettings):
                 "BANK_ACCOUNT_ENCRYPTION_KEY must be set in production "
                 '(generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")'
             )
-        if "*" in self.BACKEND_CORS_ORIGINS:
+        if "*" in self.cors_origins:
             problems.append("BACKEND_CORS_ORIGINS must not contain '*' in production")
         if self.is_sqlite:
             problems.append("DATABASE_URL must point to PostgreSQL in production, not SQLite")
@@ -187,6 +192,33 @@ class Settings(BaseSettings):
             if d and d not in seen:
                 out.append(d)
                 seen.add(d)
+        return out
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Parsed view of :pyattr:`BACKEND_CORS_ORIGINS`. Accepts a JSON array
+        (``["https://a","https://b"]``) or a comma-separated string
+        (``https://a, https://b``) or a single origin. Empty list when unset."""
+        raw = (self.BACKEND_CORS_ORIGINS or "").strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            import json
+
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                return []
+            items = parsed if isinstance(parsed, list) else []
+        else:
+            items = raw.split(",")
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            origin = str(item).strip().rstrip("/")
+            if origin and origin not in seen:
+                out.append(origin)
+                seen.add(origin)
         return out
 
     @property

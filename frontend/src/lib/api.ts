@@ -1,7 +1,10 @@
 import axios, { AxiosError, AxiosRequestConfig } from "axios";
 import { useAuthStore } from "@/stores/auth";
 
-const API_BASE = "/api/v1";
+// Dev: "/api/v1" is proxied to the local backend by Vite (see vite.config.ts).
+// Prod (Vercel): set VITE_API_BASE_URL to the full backend API base, e.g.
+// https://hrms-backend.onrender.com/api/v1
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
 
 export const api = axios.create({
   baseURL: API_BASE,

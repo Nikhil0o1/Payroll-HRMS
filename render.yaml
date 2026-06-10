@@ -1,0 +1,51 @@
+# Render Blueprint for the HRMS Payroll backend (native Python runtime).
+# Deploy via Render Dashboard → New → Blueprint, point it at this repo.
+# Or just configure a Web Service manually with the same Build/Start commands.
+#
+# Secrets are marked `sync: false` — Render will prompt you for them on first
+# deploy (and never stores them in the repo). SECRET_KEY is auto-generated.
+services:
+  - type: web
+    name: hrms-backend
+    runtime: python
+    plan: free
+    region: singapore            # match your Neon region for low latency
+    rootDir: backend             # build/start commands run from backend/
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: ENVIRONMENT
+        value: production
+      # Neon connection string (postgresql://...?sslmode=require). Paste on deploy.
+      - key: DATABASE_URL
+        sync: false
+      # Auto-generated strong secret (>= 32 chars) for JWT signing.
+      - key: SECRET_KEY
+        generateValue: true
+      # Fernet key for bank-account encryption at rest. Generate with:
+      #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      - key: BANK_ACCOUNT_ENCRYPTION_KEY
+        sync: false
+      # Your Vercel frontend origin, e.g. https://hrms-frontend.vercel.app
+      # (comma-separated if you have more than one). No trailing slash, no "*".
+      - key: BACKEND_CORS_ORIGINS
+        sync: false
+      # Same Vercel URL — used in transactional email links.
+      - key: APP_PUBLIC_URL
+        sync: false
+      # First admin (bootstrapped on startup). Use a real address + strong password.
+      - key: FIRST_SUPERADMIN_EMAIL
+        sync: false
+      - key: FIRST_SUPERADMIN_PASSWORD
+        sync: false
+      # Optional: restrict signup/login to your company domain(s). Leave blank for none.
+      - key: ALLOWED_EMAIL_DOMAINS
+        sync: false
+      # Email delivery. `console` just logs to Render's log stream (zero setup).
+      # Switch to `smtp` and add SMTP_* vars in the dashboard to send real email.
+      - key: EMAIL_BACKEND
+        value: console

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -15,7 +15,6 @@ import {
   Eye,
   EyeOff,
   KeyRound,
-  LayoutTemplate,
   Mail,
   Phone,
   Plus,
@@ -30,6 +29,7 @@ import {
 import { toast } from "sonner";
 
 import { UserAvatar } from "@/components/user-avatar";
+import { SalaryPreviewCard, useSalaryPreview } from "@/components/salary-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -71,7 +71,6 @@ import type {
   BankDetailChangeRequest,
   Employee,
   SalaryStructure,
-  SalaryTemplate,
   Shift,
   StepUpToken,
 } from "@/types/api";
@@ -283,6 +282,14 @@ export function EmployeeDetailPage() {
                       : "—"
                   }
                 />
+                <Field
+                  label="Certificate DOB"
+                  value={
+                    emp.profile?.certificate_date_of_birth
+                      ? format(parseISO(emp.profile.certificate_date_of_birth), "d MMM yyyy")
+                      : "—"
+                  }
+                />
                 <Field label="Gender" value={emp.profile?.gender ?? "—"} />
                 <Field label="PAN" value={emp.profile?.pan ?? "—"} mono />
                 <Field label="Personal email" value={emp.personal_email ?? "—"} />
@@ -410,7 +417,7 @@ export function EmployeeDetailPage() {
                   <CardDescription>Versioned. Latest active applies to payroll.</CardDescription>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <ApplyTemplateDialog employeeId={employeeId} />
+                  <GenerateSalaryDialog employeeId={employeeId} employmentType={emp.employment_type} />
                   <SalaryDialog employeeId={employeeId} latest={structures.data?.[0]} />
                 </div>
               </CardHeader>
@@ -419,10 +426,10 @@ export function EmployeeDetailPage() {
                   <EmptyState
                     icon={Wallet}
                     title="No salary structure yet"
-                    description="Apply a salary template, or build a one-off structure from scratch."
+                    description="Generate one from this employee's type + Annual CTC, or build a one-off structure from scratch."
                     action={
                       <div className="flex flex-wrap items-center justify-center gap-2">
-                        <ApplyTemplateDialog employeeId={employeeId} />
+                        <GenerateSalaryDialog employeeId={employeeId} employmentType={emp.employment_type} />
                         <SalaryDialog employeeId={employeeId} latest={structures.data?.[0]} />
                       </div>
                     }
@@ -583,6 +590,8 @@ function BankDetailsPanel({
   const [revealedAccount, setRevealedAccount] = useState<string | null>(null);
   const qc = useQueryClient();
   const pending = requests.filter((r) => r.status === "PENDING");
+  const acctType = employee.profile?.bank_account_type;
+  const acctTypeLabel = acctType ? acctType.charAt(0) + acctType.slice(1).toLowerCase() : "—";
   const decide = useMutation({
     mutationFn: async ({ id, action }: { id: number; action: "approve" | "reject" }) =>
       (await api.post(`/employees/bank-change-requests/${id}/${action}`, {})).data,
@@ -596,6 +605,7 @@ function BankDetailsPanel({
 
   return (
     <>
+      <Field label="Account holder" value={employee.profile?.bank_account_holder_name ?? "—"} />
       <Field label="Bank" value={employee.profile?.bank_name ?? "—"} />
       <div>
         <Field
@@ -616,7 +626,9 @@ function BankDetailsPanel({
           <RevealBankAccountDialog employeeId={employeeId} onReveal={setRevealedAccount} />
         ) : null}
       </div>
+      <Field label="Account type" value={acctTypeLabel} />
       <Field label="IFSC" value={employee.profile?.bank_ifsc ?? "—"} mono />
+      <Field label="Branch" value={employee.profile?.bank_branch ?? "—"} />
       {employee.profile?.pending_bank_detail_change ? (
         <div className="sm:col-span-2">
           <Badge variant="warning">Pending change</Badge>
@@ -858,67 +870,43 @@ function SalaryDialog({ employeeId, latest }: { employeeId: number; latest?: Sal
   );
 }
 
-const applyTemplateSchema = z.object({
-  template_id: z.coerce.number().int().positive("Pick a template"),
+const generateSalarySchema = z.object({
+  ctc_annual: z.coerce.number().min(1, "Enter the annual CTC"),
   effective_from: z.string().min(1, "Required"),
-  ctc_annual: z.coerce.number().min(0).optional(),
 });
-type ApplyTemplateValues = z.infer<typeof applyTemplateSchema>;
+type GenerateSalaryValues = z.infer<typeof generateSalarySchema>;
 
-function ApplyTemplateDialog({ employeeId }: { employeeId: number }) {
+function GenerateSalaryDialog({
+  employeeId,
+  employmentType,
+}: {
+  employeeId: number;
+  employmentType: Employee["employment_type"];
+}) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
-
-  const templates = useQuery({
-    queryKey: ["settings", "salary-templates"],
-    queryFn: async () =>
-      (await api.get<SalaryTemplate[]>("/settings/salary-templates")).data,
-    enabled: open,
+  const form = useForm<GenerateSalaryValues>({
+    resolver: zodResolver(generateSalarySchema),
+    defaultValues: { ctc_annual: 0, effective_from: format(new Date(), "yyyy-MM-dd") },
   });
-  const activeTemplates = (templates.data ?? []).filter((t) => t.is_active);
-
-  const form = useForm<ApplyTemplateValues>({
-    resolver: zodResolver(applyTemplateSchema),
-    defaultValues: {
-      template_id: 0,
-      effective_from: format(new Date(), "yyyy-MM-dd"),
-      ctc_annual: undefined,
-    },
-  });
-
-  const selectedId = Number(form.watch("template_id") || 0);
-  const selected = activeTemplates.find((t) => t.id === selectedId);
-
-  // Pre-fill the CTC override field with the template's CTC whenever the user
-  // picks a different template, so the displayed amount tracks the source.
-  // The field stays editable for per-employee overrides.
-  useEffect(() => {
-    if (selected) {
-      form.setValue("ctc_annual", selected.annual_ctc ?? 0);
-    }
-  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ctc = Number(form.watch("ctc_annual")) || 0;
+  const preview = useSalaryPreview(employmentType, ctc, open);
 
   const submit = useMutation({
-    mutationFn: async (v: ApplyTemplateValues) =>
+    mutationFn: async (v: GenerateSalaryValues) =>
       (
-        await api.post("/salary-structures/apply-template", {
+        await api.post("/salary-structures/from-type", {
           employee_id: employeeId,
-          template_id: v.template_id,
+          employment_type: employmentType,
+          ctc_annual: v.ctc_annual,
           effective_from: v.effective_from,
-          // Treat 0 / unset as "use the template's CTC" — sending 0 would fail
-          // the backend's "CTC must be > 0" guard.
-          ctc_annual: v.ctc_annual && v.ctc_annual > 0 ? v.ctc_annual : undefined,
         })
       ).data,
     onSuccess: () => {
-      toast.success("Template applied");
+      toast.success("Salary structure generated");
       qc.invalidateQueries({ queryKey: ["salary-structures", employeeId] });
       setOpen(false);
-      form.reset({
-        template_id: 0,
-        effective_from: format(new Date(), "yyyy-MM-dd"),
-        ctc_annual: undefined,
-      });
+      form.reset({ ctc_annual: 0, effective_from: format(new Date(), "yyyy-MM-dd") });
     },
     onError: (e) => toast.error(apiErrorMessage(e)),
   });
@@ -927,107 +915,70 @@ function ApplyTemplateDialog({ employeeId }: { employeeId: number }) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline">
-          <LayoutTemplate className="h-4 w-4" /> Apply template
+          <Wallet className="h-4 w-4" /> Generate from CTC
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Apply salary template</DialogTitle>
+          <DialogTitle>Generate salary structure</DialogTitle>
           <DialogDescription>
-            Materialise a reusable template into a versioned structure. The currently
-            active structure (if any) becomes inactive on the effective date.
+            Built from the <span className="font-medium">{EMPLOYMENT_LABELS[employmentType]}</span>{" "}
+            components and the Annual CTC. The currently active structure (if any) becomes inactive.
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={form.handleSubmit((v) => submit.mutate(v))}>
-          <div className="space-y-1.5">
-            <Label>Template</Label>
-            {templates.isLoading ? (
-              <Skeleton className="h-10 w-full rounded-md" />
-            ) : activeTemplates.length === 0 ? (
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-100">
-                No active salary templates yet. Create one in{" "}
-                <Link to="/settings/salary-templates" className="font-medium underline">
-                  Settings → Salary templates
-                </Link>{" "}
-                first.
-              </div>
-            ) : (
-              <Select
-                value={selectedId ? String(selectedId) : ""}
-                onValueChange={(v) =>
-                  form.setValue("template_id", Number(v), { shouldValidate: true })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Pick a template" />
-                </SelectTrigger>
-                <SelectContent>
-                  {activeTemplates.map((t) => (
-                    <SelectItem key={t.id} value={String(t.id)}>
-                      {t.name}
-                      {t.annual_ctc ? ` · ${formatCurrency(t.annual_ctc)}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {form.formState.errors.template_id ? (
-              <p className="text-xs text-destructive">
-                {form.formState.errors.template_id.message}
-              </p>
-            ) : null}
-          </div>
-
-          {selected ? (
-            <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-medium text-foreground">{selected.name}</span>
-                <span className="tabular-nums">
-                  {(selected.components ?? []).length} component(s)
-                </span>
-              </div>
-              {selected.description ? (
-                <p className="mt-1 line-clamp-2">{selected.description}</p>
-              ) : null}
-            </div>
-          ) : null}
-
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="effective_from">Effective from</Label>
-              <Input
-                id="effective_from"
-                type="date"
-                {...form.register("effective_from")}
-              />
-              {form.formState.errors.effective_from ? (
-                <p className="text-xs text-destructive">
-                  {form.formState.errors.effective_from.message}
+              <Label htmlFor="g_ctc">Annual CTC (in ₹ lakhs)</Label>
+              <div className="relative">
+                <Input
+                  id="g_ctc"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  inputMode="decimal"
+                  placeholder="e.g. 5"
+                  className="pr-12"
+                  value={ctc ? ctc / 100000 : ""}
+                  onChange={(e) => {
+                    const lpa = parseFloat(e.target.value);
+                    form.setValue("ctc_annual", isNaN(lpa) ? 0 : Math.round(lpa * 100000), {
+                      shouldValidate: true,
+                    });
+                  }}
+                />
+                <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-muted-foreground">
+                  LPA
+                </span>
+              </div>
+              {form.formState.errors.ctc_annual ? (
+                <p className="text-xs text-destructive">{form.formState.errors.ctc_annual.message}</p>
+              ) : ctc > 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  = {formatCurrency(ctc)} / yr · {formatCurrency(Math.round(ctc / 12))} / mo
                 </p>
               ) : null}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="ctc_annual">CTC override (optional)</Label>
-              <Input
-                id="ctc_annual"
-                type="number"
-                step="0.01"
-                placeholder={selected?.annual_ctc ? String(selected.annual_ctc) : "—"}
-                {...form.register("ctc_annual")}
-              />
+              <Label htmlFor="g_eff">Effective from</Label>
+              <Input id="g_eff" type="date" {...form.register("effective_from")} />
             </div>
           </div>
+
+          {ctc > 0 ? (
+            <SalaryPreviewCard preview={preview.data} loading={preview.isLoading} />
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Enter an Annual CTC to preview the monthly breakdown.
+            </p>
+          )}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button
-              type="submit"
-              loading={submit.isPending}
-              disabled={activeTemplates.length === 0}
-            >
-              Apply
+            <Button type="submit" loading={submit.isPending} disabled={ctc <= 0}>
+              Generate
             </Button>
           </DialogFooter>
         </form>

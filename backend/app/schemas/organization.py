@@ -1,5 +1,5 @@
 """Schemas for the Settings area: organisation profile, work locations,
-salary components, salary templates, pay schedule, and user listing."""
+salary components, pay schedule, and user listing."""
 from __future__ import annotations
 
 from typing import List, Optional
@@ -90,7 +90,11 @@ ComponentCategory = str  # Literal["EARNING","DEDUCTION","REIMBURSEMENT"] enforc
 ComponentCalcType = str  # Literal["FIXED","PERCENT_OF_BASIC","PERCENT_OF_CTC"]
 
 
+_EMPLOYMENT_TYPES = {"FULL_TIME", "PART_TIME", "CONTRACT", "INTERN"}
+
+
 class SalaryComponentBase(BaseModel):
+    employment_type: str = Field(default="FULL_TIME")
     code: str = Field(min_length=2, max_length=40)
     name: str = Field(min_length=2, max_length=120)
     category: str = Field(default="EARNING")
@@ -100,12 +104,20 @@ class SalaryComponentBase(BaseModel):
     consider_for_esi: bool = False
     is_active: bool = True
 
+    @field_validator("employment_type")
+    @classmethod
+    def _emp_type(cls, v: str) -> str:
+        v = (v or "").upper()
+        if v not in _EMPLOYMENT_TYPES:
+            raise ValueError("employment_type must be one of " + ", ".join(sorted(_EMPLOYMENT_TYPES)))
+        return v
+
     @field_validator("category")
     @classmethod
     def _category(cls, v: str) -> str:
         v = (v or "").upper()
-        if v not in {"EARNING", "DEDUCTION", "REIMBURSEMENT"}:
-            raise ValueError("category must be EARNING, DEDUCTION, or REIMBURSEMENT")
+        if v not in {"EARNING", "DEDUCTION"}:
+            raise ValueError("category must be EARNING or DEDUCTION")
         return v
 
     @field_validator("calc_type")
@@ -142,6 +154,7 @@ class SalaryComponentUpdate(BaseModel):
 
 class SalaryComponentOut(ORMModel):
     id: int
+    employment_type: str
     code: str
     name: str
     category: str
@@ -149,45 +162,6 @@ class SalaryComponentOut(ORMModel):
     calc_value: float
     consider_for_epf: bool
     consider_for_esi: bool
-    is_active: bool
-
-
-# ---------- Salary templates ----------
-
-
-class SalaryTemplateComponent(BaseModel):
-    code: str
-    name: str
-    calc_type: str
-    value: float = 0
-
-
-class SalaryTemplateBase(BaseModel):
-    name: str = Field(min_length=2, max_length=120)
-    description: Optional[str] = None
-    annual_ctc: Optional[float] = Field(default=None, ge=0)
-    components: List[SalaryTemplateComponent] = Field(default_factory=list)
-    is_active: bool = True
-
-
-class SalaryTemplateCreate(SalaryTemplateBase):
-    pass
-
-
-class SalaryTemplateUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    annual_ctc: Optional[float] = None
-    components: Optional[List[SalaryTemplateComponent]] = None
-    is_active: Optional[bool] = None
-
-
-class SalaryTemplateOut(ORMModel):
-    id: int
-    name: str
-    description: Optional[str] = None
-    annual_ctc: Optional[float] = None
-    components: List[SalaryTemplateComponent] = Field(default_factory=list)
     is_active: bool
 
 

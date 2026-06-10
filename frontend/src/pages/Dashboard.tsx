@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   differenceInCalendarDays,
@@ -11,6 +11,7 @@ import {
 } from "date-fns";
 import {
   ArrowRight,
+  BarChart3,
   CalendarCheck2,
   CalendarDays,
   CalendarX2,
@@ -48,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SimpleTooltip } from "@/components/ui/tooltip";
 import { ColoredBars, StackedBars } from "@/components/ui/charts";
 import { api, apiErrorMessage } from "@/lib/api";
 import { cn, formatCurrency, formatISTTime, minutesToHours, monthLabel } from "@/lib/utils";
@@ -124,7 +126,7 @@ function EmployeeDashboard() {
       {/* Greeting */}
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 className="text-lg font-semibold tracking-tight">
             {greet}, {displayName} <span className="align-middle">👋</span>
           </h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
@@ -137,24 +139,24 @@ function EmployeeDashboard() {
         </Button>
       </div>
 
-      {/* Row 1 — status / today / month / leave */}
+      {/* Row 1 — hero punch (focal) + today + month */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <AttendanceStatusCard />
+        <HeroPunchCard className="sm:col-span-2 xl:col-span-2" />
         <TodayOverviewCard />
         <MonthSummaryCard />
-        <LeaveBalanceCard />
       </div>
 
-      {/* Row 2 — quick actions / holidays / payslip */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <QuickActionsCard />
+      {/* Row 2 — leave / holidays / payslip / quick actions */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <LeaveBalanceCard />
         <UpcomingHolidaysCard />
         <LatestPayslipCard />
+        <QuickActionsCard />
       </div>
 
       {/* Row 3 — attendance overview / announcements */}
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-        <AttendanceOverviewCard className="xl:col-span-2" />
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <AttendanceOverviewCard className="lg:col-span-2" />
         <AnnouncementsCard />
       </div>
     </div>
@@ -162,14 +164,6 @@ function EmployeeDashboard() {
 }
 
 /* ── shared bits ── */
-
-function CardLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-      {children}
-    </span>
-  );
-}
 
 function SectionLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
@@ -189,14 +183,160 @@ function useTodayStatus() {
   });
 }
 
-/* ── Card 1: Attendance status + punch ── */
-function AttendanceStatusCard() {
+/* ── Shared dashboard card: a refined gradient accent bar + gradient icon tile
+   give each card a distinct, mature identity; the layered shadow lifts it off
+   the page. Compact padding keeps the whole board at-a-glance (no scroll). ── */
+type Accent = "primary" | "info" | "success" | "amber" | "violet" | "rose" | "teal";
+const ACCENT: Record<Accent, { icon: string; tile: string; bar: string }> = {
+  primary: { icon: "text-primary", tile: "from-primary/15 to-primary/5", bar: "from-primary via-sky-400 to-cyan-300" },
+  info: { icon: "text-info", tile: "from-info/15 to-info/5", bar: "from-info via-sky-400 to-cyan-300" },
+  success: { icon: "text-success", tile: "from-success/15 to-success/5", bar: "from-success via-emerald-400 to-teal-300" },
+  amber: { icon: "text-amber-600", tile: "from-amber-500/15 to-amber-500/5", bar: "from-amber-500 via-orange-400 to-yellow-300" },
+  violet: { icon: "text-violet-600", tile: "from-violet-500/15 to-violet-500/5", bar: "from-violet-500 via-purple-400 to-fuchsia-300" },
+  rose: { icon: "text-rose-600", tile: "from-rose-500/15 to-rose-500/5", bar: "from-rose-500 via-pink-400 to-orange-300" },
+  teal: { icon: "text-teal-600", tile: "from-teal-500/15 to-teal-500/5", bar: "from-teal-500 via-cyan-400 to-emerald-300" },
+};
+
+function DashCard({
+  icon: Icon,
+  title,
+  accent = "primary",
+  action,
+  footer,
+  className,
+  children,
+}: {
+  icon?: React.ComponentType<{ className?: string }>;
+  title?: string;
+  accent?: Accent;
+  action?: React.ReactNode;
+  footer?: React.ReactNode;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const a = ACCENT[accent];
+  return (
+    <div
+      className={cn(
+        "group relative flex flex-col overflow-hidden rounded-2xl border border-border/70 bg-card p-4",
+        "shadow-[0_1px_2px_rgba(16,24,40,0.04),0_12px_28px_-14px_rgba(16,24,40,0.16)]",
+        "transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_6px_14px_rgba(16,24,40,0.06),0_24px_50px_-18px_rgba(16,24,40,0.26)]",
+        className,
+      )}
+    >
+      {/* refined gradient accent bar */}
+      <div className={cn("pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r", a.bar)} />
+      {Icon || title || action ? (
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {Icon ? (
+              <span
+                className={cn(
+                  "grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br ring-1 ring-inset ring-black/[0.03]",
+                  a.tile,
+                  a.icon,
+                )}
+              >
+                <Icon className="h-[18px] w-[18px]" />
+              </span>
+            ) : null}
+            {title ? (
+              <span className="truncate text-sm font-semibold tracking-tight">{title}</span>
+            ) : null}
+          </div>
+          {action}
+        </div>
+      ) : null}
+      <div className="mt-3 flex flex-1 flex-col">{children}</div>
+      {footer ? (
+        <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2.5">
+          {footer}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ── A ticking clock, isolated so only the hero re-renders each second ── */
+function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
+function HoursRing({ pct, label }: { pct: number; label: string }) {
+  const r = 28;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (Math.max(0, Math.min(100, pct)) / 100) * circ;
+  return (
+    <div className="relative grid h-[72px] w-[72px] shrink-0 place-items-center">
+      <svg className="h-[72px] w-[72px] -rotate-90" viewBox="0 0 72 72">
+        <circle cx="36" cy="36" r={r} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="6" />
+        <circle
+          cx="36"
+          cy="36"
+          r={r}
+          fill="none"
+          stroke="white"
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={offset}
+          className="transition-all duration-700"
+        />
+      </svg>
+      <div className="absolute text-center leading-none">
+        <div className="text-sm font-bold tabular-nums">{label}</div>
+        <div className="mt-0.5 text-[8px] uppercase tracking-wide text-white/55">today</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Filled, instantly-readable sun / moon glyphs (Heroicons solid shapes).
+   `currentColor` lets the phase tint them. ── */
+function SunGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M12 2.25a.75.75 0 0 1 .75.75v2.25a.75.75 0 0 1-1.5 0V3a.75.75 0 0 1 .75-.75zM7.5 12a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0zM18.894 6.166a.75.75 0 0 0-1.06-1.06l-1.591 1.59a.75.75 0 1 0 1.06 1.061l1.591-1.59zM21.75 12a.75.75 0 0 1-.75.75h-2.25a.75.75 0 0 1 0-1.5H21a.75.75 0 0 1 .75.75zM17.834 18.894a.75.75 0 0 0 1.06-1.06l-1.59-1.591a.75.75 0 1 0-1.061 1.06l1.59 1.591zM12 18a.75.75 0 0 1 .75.75V21a.75.75 0 0 1-1.5 0v-2.25A.75.75 0 0 1 12 18zM7.758 17.303a.75.75 0 0 0-1.061-1.06l-1.591 1.59a.75.75 0 0 0 1.06 1.061l1.591-1.59zM6 12a.75.75 0 0 1-.75.75H3a.75.75 0 0 1 0-1.5h2.25A.75.75 0 0 1 6 12zM6.697 7.757a.75.75 0 0 0 1.06-1.06l-1.59-1.591a.75.75 0 0 0-1.061 1.06l1.59 1.591z" />
+    </svg>
+  );
+}
+
+function MoonGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M9.528 1.718a.75.75 0 0 1 .162.819A8.97 8.97 0 0 0 9 6a9 9 0 0 0 9 9 8.97 8.97 0 0 0 3.463-.69.75.75 0 0 1 .981.98 10.503 10.503 0 0 1-9.694 6.46c-5.799 0-10.5-4.7-10.5-10.5 0-4.368 2.667-8.112 6.46-9.694a.75.75 0 0 1 .818.162z" />
+    </svg>
+  );
+}
+
+/* ── Time-of-day theme: the hero gradient shifts with the clock
+   (morning → afternoon → evening → night) and gently pans so it feels alive. ── */
+function timeTheme(hour: number) {
+  if (hour >= 5 && hour < 12)
+    return { glyph: "sun" as const, color: "text-amber-200", grad: "from-[#0f2a5e] via-[#2f6fd0] to-[#f4a259]", orb: "bg-amber-300/40" };
+  if (hour >= 12 && hour < 17)
+    return { glyph: "sun" as const, color: "text-yellow-100", grad: "from-[#0c4a9e] via-[#1f6fe0] to-[#5bb6f2]", orb: "bg-sky-100/35" };
+  if (hour >= 17 && hour < 20)
+    return { glyph: "sun" as const, color: "text-orange-300", grad: "from-[#34246b] via-[#9b3b8f] to-[#f0743e]", orb: "bg-orange-400/40" };
+  return { glyph: "moon" as const, color: "text-slate-100", grad: "from-[#070d28] via-[#141f52] to-[#2a2f6b]", orb: "bg-indigo-200/25" };
+}
+
+/* ── Hero: live clock + punch (the focal point of the dashboard) ── */
+function HeroPunchCard({ className }: { className?: string }) {
   const qc = useQueryClient();
   const today = useTodayStatus();
   const status = today.data;
   const punchedIn = !!status?.is_punched_in;
   const hasIn = !!status?.first_in;
   const checkedOut = hasIn && !punchedIn;
+  const now = useNow();
+  const theme = timeTheme(now.getHours());
+  const Glyph = theme.glyph === "moon" ? MoonGlyph : SunGlyph;
 
   const punch = useMutation({
     mutationFn: async (type: "IN" | "OUT") => (await api.post("/attendance/punch", { type })).data,
@@ -208,55 +348,99 @@ function AttendanceStatusCard() {
   });
 
   const headline = punchedIn ? "Checked in" : checkedOut ? "Checked out" : "Not checked in";
-  const sub = punchedIn
-    ? `since ${formatISTTime(status?.first_in)}`
-    : checkedOut
-      ? `at ${formatISTTime(status?.last_out)}`
-      : "Punch in to start your day";
+  const workedMin = status?.worked_minutes ?? 0;
+  const pct = Math.round((workedMin / (8 * 60)) * 100);
 
   return (
-    <Card className="flex flex-col p-4">
-      <div className="flex items-center justify-between">
-        <CardLabel>Attendance status</CardLabel>
-        {hasIn ? (
-          <span
-            className={cn(
-              "rounded-full px-2 py-0.5 text-[11px] font-semibold",
-              status?.is_late ? "bg-warning/15 text-warning" : "bg-success/12 text-success",
-            )}
-          >
-            {status?.is_late ? "Late" : "On time"}
-          </span>
-        ) : null}
-      </div>
-
-      <div className="mt-3 flex items-center gap-2">
-        <span
+    <div
+      className={cn(
+        "relative flex flex-col overflow-hidden rounded-2xl text-white shadow-pop",
+        className,
+      )}
+    >
+      {/* animated time-of-day gradient */}
+      <div
+        className={cn(
+          "absolute inset-0 bg-gradient-to-br bg-[length:180%_180%] animate-gradient-pan",
+          theme.grad,
+        )}
+      />
+      {/* sun / moon glyph */}
+      <div className="pointer-events-none absolute right-5 top-5">
+        <div className={cn("absolute -inset-4 rounded-full blur-2xl", theme.orb)} />
+        <Glyph
           className={cn(
-            "h-2.5 w-2.5 shrink-0 rounded-full",
-            punchedIn ? "bg-success animate-pulse" : checkedOut ? "bg-muted-foreground" : "bg-border",
+            "relative h-9 w-9 animate-float-slow drop-shadow-[0_2px_5px_rgba(0,0,0,0.3)]",
+            theme.color,
           )}
         />
-        <span className="text-lg font-semibold tracking-tight">{headline}</span>
       </div>
-      <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>
+      <div className="pointer-events-none absolute -bottom-16 left-12 h-44 w-44 rounded-full bg-white/5 blur-3xl" />
 
-      <div className="mt-3 flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2">
-        <span className="text-xs text-muted-foreground">Working hours today</span>
-        <span className="text-sm font-semibold tabular-nums">
-          {today.isLoading ? "—" : minutesToHours(status?.worked_minutes ?? 0)}
-        </span>
+      <div className="relative flex flex-1 flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+        {/* Clock + status */}
+        <div className="flex min-w-0 flex-col">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-white/55">
+            {format(now, "EEEE, d MMMM")}
+          </span>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="text-[40px] font-bold leading-none tracking-tight tabular-nums">
+              {format(now, "h:mm")}
+            </span>
+            <span className="text-lg font-medium tabular-nums text-white/60">{format(now, "ss")}</span>
+            <span className="text-sm font-semibold text-white/70">{format(now, "a")}</span>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span
+              className={cn(
+                "h-2.5 w-2.5 rounded-full",
+                punchedIn ? "animate-pulse bg-emerald-400" : checkedOut ? "bg-white/40" : "bg-white/30",
+              )}
+            />
+            <span className="text-base font-semibold">{headline}</span>
+            {hasIn ? (
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                  status?.is_late
+                    ? "bg-amber-400/20 text-amber-200"
+                    : "bg-emerald-400/20 text-emerald-200",
+                )}
+              >
+                {status?.is_late ? "Late" : "On time"}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs text-white/55">
+            {punchedIn
+              ? `Since ${formatISTTime(status?.first_in)}`
+              : checkedOut
+                ? `Out at ${formatISTTime(status?.last_out)}`
+                : "Punch in to start your day"}
+          </p>
+        </div>
+
+        {/* Hours ring + punch button */}
+        <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-end">
+          <HoursRing pct={pct} label={minutesToHours(workedMin)} />
+          <Button
+            size="lg"
+            loading={punch.isPending}
+            onClick={() => punch.mutate(punchedIn ? "OUT" : "IN")}
+            className={cn(
+              "min-w-[140px] shadow-lg",
+              punchedIn
+                ? "bg-white text-[#16306a] hover:bg-white/90"
+                : "bg-emerald-500 text-white hover:bg-emerald-600",
+            )}
+          >
+            {punchedIn ? <LogOut className="h-4 w-4" /> : <LogIn className="h-4 w-4" />}
+            {punchedIn ? "Punch out" : "Punch in"}
+          </Button>
+        </div>
       </div>
-
-      <Button
-        className="mt-3 w-full"
-        loading={punch.isPending}
-        onClick={() => punch.mutate(punchedIn ? "OUT" : "IN")}
-      >
-        {punchedIn ? <LogOut className="h-4 w-4" /> : <LogIn className="h-4 w-4" />}
-        {punchedIn ? "Punch out" : "Punch in"}
-      </Button>
-    </Card>
+    </div>
   );
 }
 
@@ -275,9 +459,8 @@ function TodayOverviewCard() {
     },
   ];
   return (
-    <Card className="flex flex-col p-4">
-      <CardLabel>Today's overview</CardLabel>
-      <div className="mt-3 flex-1 space-y-2.5">
+    <DashCard icon={Clock} title="Today's overview" accent="info">
+      <div className="space-y-2.5">
         {rows.map((r) => (
           <div key={r.label} className="flex items-center justify-between">
             <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -288,7 +471,7 @@ function TodayOverviewCard() {
           </div>
         ))}
       </div>
-    </Card>
+    </DashCard>
   );
 }
 
@@ -338,12 +521,16 @@ function MonthSummaryCard() {
   ];
 
   return (
-    <Card className="flex flex-col p-4">
-      <CardLabel>This month summary</CardLabel>
+    <DashCard
+      icon={CalendarCheck2}
+      title="This month"
+      accent="amber"
+      footer={<SectionLink to="/attendance">View attendance</SectionLink>}
+    >
       {summary.isLoading ? (
-        <Skeleton className="mt-3 h-24 flex-1" />
+        <Skeleton className="h-24 flex-1" />
       ) : (
-        <div className="mt-3 flex-1 space-y-2">
+        <div className="flex-1 space-y-2">
           {rows.map((r) => (
             <div key={r.label} className="flex items-center justify-between">
               <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -355,10 +542,7 @@ function MonthSummaryCard() {
           ))}
         </div>
       )}
-      <div className="mt-2 pt-1">
-        <SectionLink to="/attendance">View attendance</SectionLink>
-      </div>
-    </Card>
+    </DashCard>
   );
 }
 
@@ -372,14 +556,20 @@ function LeaveBalanceCard() {
   });
 
   return (
-    <Card className="flex flex-col p-4">
-      <div className="flex items-center justify-between">
-        <CardLabel>Leave balance</CardLabel>
-        <SectionLink to="/leaves">View all</SectionLink>
-      </div>
-      <p className="mt-1 text-xs text-muted-foreground">{new Date().getFullYear()} entitlement</p>
-
-      <div className="mt-3 flex-1 space-y-2.5">
+    <DashCard
+      icon={Plane}
+      title="Leave balance"
+      accent="success"
+      footer={
+        <>
+          <span className="text-[11px] text-muted-foreground">
+            {new Date().getFullYear()} entitlement
+          </span>
+          <SectionLink to="/leaves">Apply leave</SectionLink>
+        </>
+      }
+    >
+      <div className="flex-1 space-y-2.5">
         {q.isLoading ? (
           <Skeleton className="h-20" />
         ) : (q.data ?? []).length === 0 ? (
@@ -388,10 +578,22 @@ function LeaveBalanceCard() {
           q.data!.slice(0, 3).map((b) => {
             const total = b.allotted || 0;
             const pct = total > 0 ? Math.min(100, Math.round((b.available / total) * 100)) : 0;
+            const pending = Number(b.pending) || 0;
             return (
               <div key={b.id} className="space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium truncate">{b.leave_type?.name ?? b.leave_type?.code}</span>
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="font-medium truncate">{b.leave_type?.name ?? b.leave_type?.code}</span>
+                    {pending > 0 ? (
+                      <SimpleTooltip
+                        label={`${pending} day${pending === 1 ? "" : "s"} held against pending request — released if rejected`}
+                      >
+                        <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+                          {pending} pending
+                        </span>
+                      </SimpleTooltip>
+                    ) : null}
+                  </span>
                   <span className="tabular-nums shrink-0">
                     <span className="font-semibold">{b.available}</span>
                     <span className="text-muted-foreground"> / {b.allotted}</span>
@@ -403,10 +605,7 @@ function LeaveBalanceCard() {
           })
         )}
       </div>
-      <div className="mt-2 pt-1">
-        <SectionLink to="/leaves">Apply leave</SectionLink>
-      </div>
-    </Card>
+    </DashCard>
   );
 }
 
@@ -420,26 +619,23 @@ const QUICK_ACTIONS = [
 
 function QuickActionsCard() {
   return (
-    <Card className="flex flex-col p-4">
-      <CardTitle className="text-sm">Quick actions</CardTitle>
-      <div className="mt-3 grid flex-1 grid-cols-2 gap-2">
+    <DashCard icon={Sparkles} title="Quick actions" accent="violet">
+      <div className="flex flex-1 flex-col justify-center gap-0.5">
         {QUICK_ACTIONS.map((a) => (
           <Link
             key={a.to}
             to={a.to}
-            className="group flex items-center gap-2.5 rounded-lg border border-border bg-card px-2.5 py-2.5 transition-colors hover:border-primary/40 hover:bg-muted/40"
+            className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/60"
           >
-            <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-lg", a.tone)}>
-              <a.icon className="h-4 w-4" />
+            <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-lg", a.tone)}>
+              <a.icon className="h-3.5 w-3.5" />
             </span>
-            <span className="min-w-0">
-              <span className="block truncate text-xs font-semibold leading-tight">{a.label}</span>
-              <span className="block truncate text-[11px] text-muted-foreground">{a.sub}</span>
-            </span>
+            <span className="min-w-0 flex-1 truncate text-xs font-medium">{a.label}</span>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
           </Link>
         ))}
       </div>
-    </Card>
+    </DashCard>
   );
 }
 
@@ -463,12 +659,13 @@ function UpcomingHolidaysCard() {
   }, [q.data]);
 
   return (
-    <Card className="flex flex-col p-4">
-      <div className="flex items-center justify-between">
-        <CardTitle className="text-sm">Upcoming holidays</CardTitle>
-        <SectionLink to="/holidays">View calendar</SectionLink>
-      </div>
-      <div className="mt-3 flex-1">
+    <DashCard
+      icon={CalendarDays}
+      title="Upcoming holidays"
+      accent="rose"
+      footer={<SectionLink to="/holidays">View calendar</SectionLink>}
+    >
+      <div className="flex-1">
         {q.isLoading ? (
           <Skeleton className="h-24" />
         ) : upcoming.length === 0 ? (
@@ -500,7 +697,7 @@ function UpcomingHolidaysCard() {
           </ul>
         )}
       </div>
-    </Card>
+    </DashCard>
   );
 }
 
@@ -534,12 +731,13 @@ function LatestPayslipCard() {
   }
 
   return (
-    <Card className="flex flex-col p-4">
-      <div className="flex items-center justify-between">
-        <CardTitle className="text-sm">Latest payslip</CardTitle>
-        <SectionLink to="/payslips">View all</SectionLink>
-      </div>
-      <div className="mt-3 flex-1">
+    <DashCard
+      icon={ReceiptText}
+      title="Latest payslip"
+      accent="teal"
+      footer={<SectionLink to="/payslips">View all</SectionLink>}
+    >
+      <div className="flex-1">
         {q.isLoading ? (
           <Skeleton className="h-24" />
         ) : !slip ? (
@@ -577,7 +775,7 @@ function LatestPayslipCard() {
           </div>
         )}
       </div>
-    </Card>
+    </DashCard>
   );
 }
 
@@ -639,13 +837,24 @@ function AttendanceOverviewCard({ className }: { className?: string }) {
   const xInterval = days > 16 ? 2 : 0;
 
   return (
-    <Card className={cn("flex flex-col p-4", className)}>
+    <Card
+      className={cn(
+        "group relative flex flex-col overflow-hidden rounded-2xl border-border/70 bg-card p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_12px_28px_-14px_rgba(16,24,40,0.16)] transition-all duration-200 hover:shadow-[0_6px_14px_rgba(16,24,40,0.06),0_24px_50px_-18px_rgba(16,24,40,0.26)]",
+        className,
+      )}
+    >
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-primary via-sky-400 to-cyan-300" />
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <CardTitle className="text-sm">Attendance overview</CardTitle>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            Your attendance summary for {format(cursor, "MMMM yyyy")}
-          </p>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-1 ring-inset ring-black/[0.03]">
+            <BarChart3 className="h-[18px] w-[18px]" />
+          </span>
+          <div className="min-w-0">
+            <CardTitle className="text-sm">Attendance overview</CardTitle>
+            <p className="truncate text-xs text-muted-foreground">
+              Your attendance summary for {format(cursor, "MMMM yyyy")}
+            </p>
+          </div>
         </div>
         <Select
           value={format(cursor, "yyyy-MM")}
@@ -717,11 +926,13 @@ function AnnouncementsCard({ className }: { className?: string }) {
   const items = q.data ?? [];
 
   return (
-    <Card className={cn("flex min-h-[240px] flex-col p-4", className)}>
-      <div className="flex items-center justify-between">
-        <CardTitle className="text-sm">Announcements</CardTitle>
-      </div>
-      <div className="mt-3 max-h-[220px] flex-1 overflow-y-auto scrollbar-thin pr-1">
+    <DashCard
+      icon={Megaphone}
+      title="Announcements"
+      accent="violet"
+      className={cn("min-h-[240px]", className)}
+    >
+      <div className="max-h-[220px] flex-1 overflow-y-auto scrollbar-thin pr-1">
         {q.isLoading ? (
           <Skeleton className="h-24" />
         ) : items.length === 0 ? (
@@ -748,7 +959,7 @@ function AnnouncementsCard({ className }: { className?: string }) {
           </ul>
         )}
       </div>
-    </Card>
+    </DashCard>
   );
 }
 

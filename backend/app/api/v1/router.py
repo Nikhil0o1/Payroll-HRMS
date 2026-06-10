@@ -8,6 +8,7 @@ from app.api.v1 import (
     attendance,
     audit,
     auth,
+    birthdays,
     dashboard,
     employees,
     holidays,
@@ -32,6 +33,7 @@ api_v1_router.include_router(salary.router)
 api_v1_router.include_router(payroll.router)
 api_v1_router.include_router(reports.router)
 api_v1_router.include_router(audit.router)
+api_v1_router.include_router(birthdays.router)
 api_v1_router.include_router(dashboard.router)
 api_v1_router.include_router(settings.router)
 api_v1_router.include_router(shifts.router)

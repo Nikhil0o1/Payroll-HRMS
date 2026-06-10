@@ -44,22 +44,6 @@ class SalaryStructureUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
-class ApplyTemplateRequest(BaseModel):
-    """Request body for materializing a salary template onto an employee.
-
-    `ctc_annual` and `basic_monthly` are optional overrides — by default the
-    template's own CTC is used and `basic_monthly` is derived from the BASIC
-    component line. Pass them explicitly only when an individual employee's
-    package differs from the template baseline.
-    """
-
-    employee_id: int
-    template_id: int
-    effective_from: date
-    ctc_annual: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
-    basic_monthly: Optional[float] = Field(default=None, ge=0, le=_MAX_AMOUNT)
-
-
 class SalaryStructureOut(ORMModel):
     id: int
     employee_id: int
@@ -68,6 +52,38 @@ class SalaryStructureOut(ORMModel):
     basic_monthly: float
     components: List[SalaryComponent]
     is_active: bool
+
+
+# ---- Salary preview / build-from-employment-type (onboarding wizard) ----
+class SalaryPreviewRequest(BaseModel):
+    employment_type: str
+    ctc_annual: float = Field(ge=0, le=_MAX_AMOUNT)
+
+
+class SalaryLine(BaseModel):
+    code: str
+    name: str
+    amount: float
+
+
+class SalaryPreviewOut(BaseModel):
+    employment_type: str
+    ctc_annual: float
+    monthly_ctc: float
+    basic_monthly: float
+    earnings: List[SalaryLine] = []
+    deductions: List[SalaryLine] = []
+    gross: float
+    total_deductions: float
+    net: float
+    component_count: int
+
+
+class CreateStructureFromTypeRequest(BaseModel):
+    employee_id: int
+    employment_type: str
+    ctc_annual: float = Field(ge=0, le=_MAX_AMOUNT)
+    effective_from: Optional[date] = None
 
 
 # ---- Payroll runs ----

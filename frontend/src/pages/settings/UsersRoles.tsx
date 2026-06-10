@@ -45,9 +45,11 @@ import type { Role, RoleRow, UserListItem } from "@/types/api";
 
 const ROLE_LABEL: Record<Role, string> = {
   EMPLOYEE: "Employee",
-  MANAGER: "Manager",
-  HR_ADMIN: "HR Admin",
-  SUPER_ADMIN: "Super Admin",
+  ADMIN: "Admin",
+  // legacy aliases (any stored value resolves to these labels)
+  MANAGER: "Admin",
+  HR_ADMIN: "Admin",
+  SUPER_ADMIN: "Admin",
 };
 
 export default function UsersRoles() {
@@ -245,7 +247,7 @@ function buildInviteSchema(allowedDomains: readonly string[] | undefined) {
       .refine((v) => isEmailDomainAllowed(v, allowedDomains), {
         message: workEmailErrorMessage(allowedDomains),
       }),
-    role: z.enum(["EMPLOYEE", "MANAGER", "HR_ADMIN", "SUPER_ADMIN"]),
+    role: z.enum(["EMPLOYEE", "ADMIN"]),
   });
 }
 type InviteValues = z.infer<ReturnType<typeof buildInviteSchema>>;
@@ -260,8 +262,6 @@ function InviteDialog({
   onIssued: (p: { email: string; password: string }) => void;
 }) {
   const qc = useQueryClient();
-  const me = useAuthStore((s) => s.me);
-  const isSuper = rolesAtLeast(me?.role, "SUPER_ADMIN");
   const policy = useAuthPolicy();
   const allowedDomains = policy.data?.allowed_email_domains;
   const emailHint = workEmailHint(allowedDomains);
@@ -322,20 +322,18 @@ function InviteDialog({
             <Label className="mb-1.5 block text-sm">Role</Label>
             <Select
               value={form.watch("role")}
-              onValueChange={(v) => form.setValue("role", v as Role)}
+              onValueChange={(v) => form.setValue("role", v as "EMPLOYEE" | "ADMIN")}
             >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="EMPLOYEE">Employee</SelectItem>
-                <SelectItem value="MANAGER">Manager</SelectItem>
-                <SelectItem value="HR_ADMIN">HR Admin</SelectItem>
-                {isSuper ? <SelectItem value="SUPER_ADMIN">Super Admin</SelectItem> : null}
+                <SelectItem value="ADMIN">Admin</SelectItem>
               </SelectContent>
             </Select>
             <p className="mt-1.5 text-xs text-muted-foreground">
-              You cannot grant a role higher than your own.
+              Admins manage everything (employees, payroll, settings). Employees self-serve.
             </p>
           </div>
           <DialogFooter>
@@ -405,9 +403,8 @@ function RolesTab() {
     queryFn: async () => (await api.get<RoleRow[]>("/settings/roles")).data,
   });
 
-  const ROLE_DETAILS: Record<
-    Role,
-    { description: string; capabilities: string[]; icon: typeof ShieldCheck }
+  const ROLE_DETAILS: Partial<
+    Record<Role, { description: string; capabilities: string[]; icon: typeof ShieldCheck }>
   > = {
     EMPLOYEE: {
       description: "Self-service access for everyday work.",
@@ -418,30 +415,13 @@ function RolesTab() {
       ],
       icon: UserCog,
     },
-    MANAGER: {
-      description: "All Employee abilities, plus team supervision.",
-      capabilities: [
-        "View and approve their direct reports' leaves",
-        "Approve attendance regularizations for reports",
-        "View team rosters and basic profile info",
-      ],
-      icon: UserCog,
-    },
-    HR_ADMIN: {
-      description: "Configure the workspace and run payroll.",
+    ADMIN: {
+      description: "Full control of the workspace — the HR administrator.",
       capabilities: [
         "Manage employees, salary structures, leave types & holidays",
-        "Create and review payroll runs",
-        "Edit org profile, work locations, salary components & templates",
-      ],
-      icon: ShieldCheck,
-    },
-    SUPER_ADMIN: {
-      description: "Owner-level access to the entire workspace.",
-      capabilities: [
-        "Lock payroll runs and manage user accounts",
-        "Activate / deactivate users and assign roles",
-        "All HR Admin abilities",
+        "Create, review and lock payroll runs",
+        "Approve leaves and attendance regularizations",
+        "Manage users, roles, org profile and all settings",
       ],
       icon: ShieldCheck,
     },

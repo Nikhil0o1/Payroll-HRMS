@@ -6,6 +6,7 @@ import {
   Bell,
   BellOff,
   Building2,
+  Cake,
   CalendarCheck2,
   CalendarClock,
   CalendarDays,
@@ -46,10 +47,10 @@ import { cn } from "@/lib/utils";
 import { rolesAtLeast, useAuthStore } from "@/stores/auth";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { BrandMark, useOrgBranding } from "@/components/brand";
+import { useOrgBranding } from "@/components/brand";
 import { GlobalSearch } from "@/components/global-search";
 import { useNotifications, useUnreadNotifications } from "@/lib/notifications";
-import type { AppNotification, OrganisationBranding } from "@/types/api";
+import type { AppNotification } from "@/types/api";
 
 const SUPPORT_EMAIL = "hr@yanthraa.com";
 const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
@@ -84,7 +85,21 @@ const ADMIN_NAV: NavEntry[] = [
       { to: "/regularizations", label: "Regularizations", icon: History },
     ],
   },
+  { to: "/holidays", label: "Holidays", icon: CalendarDays },
+  { to: "/birthdays", label: "Birthdays", icon: Cake },
   { to: "/reports", label: "Reports", icon: BarChart3 },
+];
+
+// Configuration pages — rendered flat in the sidebar (no "Settings" wrapper),
+// separated from the primary nav by a thin divider.
+const ADMIN_CONFIG: NavItem[] = [
+  { to: "/settings/organisation", label: "Organisation", icon: Building2 },
+  { to: "/settings/work-locations", label: "Work Locations", icon: MapPin },
+  { to: "/settings/shifts", label: "Shifts", icon: Clock },
+  { to: "/settings/salary-components", label: "Salary Components", icon: ClipboardList },
+  { to: "/settings/pay-schedule", label: "Pay Schedule", icon: CalendarClock },
+  { to: "/settings/announcements", label: "Announcements", icon: Megaphone },
+  { to: "/settings/users-roles", label: "Users & Roles", icon: Users },
 ];
 
 const EMPLOYEE_NAV: NavEntry[] = [
@@ -96,20 +111,8 @@ const EMPLOYEE_NAV: NavEntry[] = [
   { to: "/holidays", label: "Holidays", icon: CalendarDays },
 ];
 
-const SETTINGS_ITEMS: NavItem[] = [
-  { to: "/settings/organisation", label: "Organisation Profile", icon: Building2 },
-  { to: "/settings/work-locations", label: "Work Locations", icon: MapPin },
-  { to: "/settings/shifts", label: "Shifts", icon: Clock },
-  { to: "/settings/salary-components", label: "Salary Components", icon: ClipboardList },
-  { to: "/settings/salary-templates", label: "Salary Templates", icon: ReceiptText },
-  { to: "/settings/pay-schedule", label: "Pay Schedule", icon: CalendarClock },
-  { to: "/settings/announcements", label: "Announcements", icon: Megaphone },
-  { to: "/settings/users-roles", label: "Users & Roles", icon: Users },
-];
-
 export function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("nav-collapsed") === "1",
   );
@@ -121,9 +124,6 @@ export function AppLayout() {
 
   const isAdmin = rolesAtLeast(me?.role, "HR_ADMIN");
   const nav = isAdmin ? ADMIN_NAV : EMPLOYEE_NAV;
-  // In Settings, the SettingsLayout's white rail replaces the main navy nav
-  // (matches Zoho exactly).
-  const inSettings = location.pathname.startsWith("/settings");
   const branding = useOrgBranding().data;
   const orgName = branding?.name ?? "—";
 
@@ -146,13 +146,7 @@ export function AppLayout() {
     navigate("/login", { replace: true });
   }
 
-  const roleLabel = rolesAtLeast(me?.role, "SUPER_ADMIN")
-    ? "Super Admin"
-    : rolesAtLeast(me?.role, "HR_ADMIN")
-      ? "HR Admin"
-      : rolesAtLeast(me?.role, "MANAGER")
-        ? "Manager"
-        : "Employee";
+  const roleLabel = rolesAtLeast(me?.role, "HR_ADMIN") ? "Admin" : "Employee";
 
   const displayName = me?.employee
     ? `${me.employee.first_name} ${me.employee.last_name}`
@@ -160,26 +154,24 @@ export function AppLayout() {
 
   return (
     <div className="min-h-screen flex bg-background">
-      {/* Sidebar (desktop) — replaced by SettingsLayout's rail when in /settings */}
-      {!inSettings ? (
-        <aside
-          className={cn(
-            "hidden lg:flex flex-col bg-sidebar sticky top-0 h-screen transition-[width] duration-200",
-            collapsed ? "w-[68px]" : "w-60",
-          )}
-        >
-          <Sidebar
-            nav={nav}
-            collapsed={collapsed}
-            branding={branding}
-            onCollapseToggle={() => setCollapsed((c) => !c)}
-            onLogout={handleLogout}
-          />
-        </aside>
-      ) : null}
+      {/* Sidebar (desktop) */}
+      <aside
+        className={cn(
+          "hidden lg:flex flex-col bg-sidebar sticky top-0 h-screen transition-[width] duration-200",
+          collapsed ? "w-[68px]" : "w-60",
+        )}
+      >
+        <Sidebar
+          nav={nav}
+          navConfig={isAdmin ? ADMIN_CONFIG : undefined}
+          collapsed={collapsed}
+          onCollapseToggle={() => setCollapsed((c) => !c)}
+          onLogout={handleLogout}
+        />
+      </aside>
 
       {/* Mobile drawer */}
-      {mobileOpen && !inSettings && (
+      {mobileOpen && (
         <div className="lg:hidden fixed inset-0 z-50">
           <div
             className="absolute inset-0 bg-foreground/40 backdrop-blur-sm animate-in fade-in-0"
@@ -188,8 +180,8 @@ export function AppLayout() {
           <aside className="absolute inset-y-0 left-0 w-64 bg-sidebar animate-in-up">
             <Sidebar
               nav={nav}
+              navConfig={isAdmin ? ADMIN_CONFIG : undefined}
               collapsed={false}
-              branding={branding}
               onClose={() => setMobileOpen(false)}
               onLogout={handleLogout}
             />
@@ -200,43 +192,39 @@ export function AppLayout() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <header className="h-14 border-b border-border bg-[hsl(240_22%_97%)] sticky top-0 z-30 flex items-center gap-3 pr-3 sm:pr-5">
-          {/* Brand strip — visible in Settings (where navy sidebar is hidden) */}
-          {inSettings ? (
-            <div className="hidden lg:flex h-full w-[260px] shrink-0 items-center gap-2.5 px-4 bg-sidebar text-white">
-              <BrandMark branding={branding} variant="dark" />
-              <span className="text-[17px] font-semibold tracking-tight">Payroll</span>
-            </div>
-          ) : null}
-
           <button
-            className="lg:hidden -ml-1 ml-3 p-2 rounded-md hover:bg-white/60"
+            className="lg:hidden ml-3 p-2 rounded-md hover:bg-white/60"
             onClick={() => setMobileOpen(true)}
             aria-label="Open menu"
           >
             <Menu className="h-5 w-5" />
           </button>
 
-          <div className={cn("flex-1 flex items-center gap-3", !inSettings && "pl-3 sm:pl-5")}>
+          <div className="flex-1 flex items-center gap-3 pl-3 sm:pl-5">
             {isAdmin ? <GlobalSearch /> : <div className="flex-1" />}
           </div>
 
-          {/* Org switcher — full name on desktop, graceful truncation when space is tight */}
-          <button
-            onClick={() => setSettingsOpen(true)}
-            title={orgName}
-            className="hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium hover:bg-white/60 transition-colors max-w-[180px] md:max-w-[280px] lg:max-w-none"
-          >
-            <span className="truncate lg:overflow-visible lg:text-clip">{orgName}</span>
-            <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-          </button>
+          {/* Org name — admins jump to Organisation settings; others see it as a label. */}
+          {isAdmin ? (
+            <button
+              onClick={() => navigate("/settings/organisation")}
+              title={orgName}
+              className="hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium hover:bg-white/60 transition-colors max-w-[180px] md:max-w-[280px] lg:max-w-none"
+            >
+              <span className="truncate lg:overflow-visible lg:text-clip">{orgName}</span>
+              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+            </button>
+          ) : (
+            <span
+              title={orgName}
+              className="hidden sm:inline-flex shrink-0 items-center px-2.5 py-1.5 text-sm font-medium max-w-[180px] md:max-w-[280px] lg:max-w-none"
+            >
+              <span className="truncate lg:overflow-visible lg:text-clip">{orgName}</span>
+            </span>
+          )}
 
           <div className="flex items-center gap-0.5">
             <NotificationsButton />
-            {isAdmin ? (
-              <IconButton label="Settings" onClick={() => setSettingsOpen(true)}>
-                <Settings className="h-[18px] w-[18px]" />
-              </IconButton>
-            ) : null}
             <HelpButton />
           </div>
 
@@ -274,7 +262,7 @@ export function AppLayout() {
                 Change password
               </DropdownMenuItem>
               {isAdmin ? (
-                <DropdownMenuItem onSelect={() => setSettingsOpen(true)}>
+                <DropdownMenuItem onSelect={() => navigate("/settings/organisation")}>
                   <Settings className="h-4 w-4" />
                   Settings
                 </DropdownMenuItem>
@@ -292,10 +280,6 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
-
-      {isAdmin ? (
-        <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      ) : null}
     </div>
   );
 }
@@ -304,29 +288,41 @@ export function AppLayout() {
 
 function Sidebar({
   nav,
+  navConfig,
   collapsed,
-  branding,
   onClose,
   onCollapseToggle,
   onLogout,
 }: {
   nav: NavEntry[];
+  navConfig?: NavItem[];
   collapsed: boolean;
-  branding?: OrganisationBranding;
   onClose?: () => void;
   onCollapseToggle?: () => void;
   onLogout?: () => void;
 }) {
   return (
     <div className="flex h-full flex-col text-sidebar-foreground">
-      {/* Brand */}
-      <div className={cn("h-16 flex items-center gap-2.5 px-3.5", collapsed && "justify-center px-0")}>
-        <BrandMark branding={branding} variant="dark" size="lg" />
-        {!collapsed ? (
-          <span className="text-lg font-semibold tracking-tight text-white">Payroll</span>
-        ) : null}
+      {/* Brand — the official brightcone.ai logo on a light gradient panel so
+          the dark wordmark stays legible on the navy sidebar. Full lockup when
+          expanded; just the pyramid mark when collapsed. */}
+      <div className={cn("h-16 flex items-center px-3", collapsed ? "justify-center px-0" : "gap-2")}>
+        <div
+          className={cn(
+            "flex items-center rounded-xl ring-1 ring-white/30",
+            "bg-gradient-to-b from-white via-slate-50 to-slate-200/95",
+            "shadow-[inset_0_1px_0_rgba(255,255,255,1),0_6px_18px_-4px_rgba(2,6,23,0.65),0_0_34px_-3px_rgba(150,190,255,0.7)]",
+            collapsed ? "h-10 w-10 shrink-0 justify-center" : "h-12 flex-1 justify-start px-4",
+          )}
+        >
+          <img
+            src={collapsed ? "/brightcone-mark.webp" : "/brightcone-logo.webp"}
+            alt="brightcone.ai"
+            className={cn("w-auto", collapsed ? "h-7" : "h-9")}
+          />
+        </div>
         {onClose ? (
-          <button onClick={onClose} className="ml-auto p-1.5 rounded-md text-white/70 hover:bg-white/10">
+          <button onClick={onClose} className="shrink-0 p-1.5 rounded-md text-white/70 hover:bg-white/10">
             <X className="h-4 w-4" />
           </button>
         ) : null}
@@ -340,6 +336,14 @@ function Sidebar({
             <SidebarLink key={entry.to} item={entry} collapsed={collapsed} />
           ),
         )}
+        {navConfig && navConfig.length ? (
+          <>
+            <div className={cn("my-2 border-t border-sidebar-border/70", collapsed ? "mx-2" : "mx-1")} />
+            {navConfig.map((item) => (
+              <SidebarLink key={item.to} item={item} collapsed={collapsed} />
+            ))}
+          </>
+        ) : null}
       </nav>
 
       {/* Footer */}
@@ -401,7 +405,7 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
       {({ isActive }) => (
         <span className={linkClass(isActive, collapsed)}>
           <Icon className="h-[18px] w-[18px] shrink-0" />
-          {!collapsed ? item.label : null}
+          {!collapsed ? <span className="min-w-0 flex-1 truncate">{item.label}</span> : null}
         </span>
       )}
     </NavLink>
@@ -445,23 +449,27 @@ function SidebarGroup({ group, collapsed }: { group: NavGroup; collapsed: boolea
         <ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} />
       </button>
       {open ? (
-        <div className="mt-0.5 space-y-0.5 pl-3">
-          {group.children.map((c) => (
-            <NavLink key={c.to} to={c.to}>
-              {({ isActive }) => (
-                <span
-                  className={cn(
-                    "flex items-center gap-3 rounded-md py-2 pl-5 pr-3 text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-primary text-white shadow-soft"
-                      : "text-sidebar-foreground hover:bg-white/[0.06] hover:text-white",
-                  )}
-                >
-                  {c.label}
-                </span>
-              )}
-            </NavLink>
-          ))}
+        <div className="mt-0.5 space-y-0.5 border-l border-sidebar-border/60 pl-2 ml-4">
+          {group.children.map((c) => {
+            const CIcon = c.icon;
+            return (
+              <NavLink key={c.to} to={c.to}>
+                {({ isActive }) => (
+                  <span
+                    className={cn(
+                      "flex items-center gap-2.5 rounded-md py-1.5 pl-2.5 pr-2 text-[13px] font-medium transition-colors",
+                      isActive
+                        ? "bg-primary text-white shadow-soft"
+                        : "text-sidebar-foreground hover:bg-white/[0.06] hover:text-white",
+                    )}
+                  >
+                    <CIcon className="h-4 w-4 shrink-0 opacity-80" />
+                    <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                  </span>
+                )}
+              </NavLink>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -469,27 +477,6 @@ function SidebarGroup({ group, collapsed }: { group: NavGroup; collapsed: boolea
 }
 
 /* ─────────────────────────── Top bar pieces ─────────────────────────── */
-
-function IconButton({
-  children,
-  label,
-  onClick,
-}: {
-  children: React.ReactNode;
-  label: string;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className="grid h-9 w-9 place-items-center rounded-md text-muted-foreground hover:bg-white/60 hover:text-foreground transition-colors"
-    >
-      {children}
-    </button>
-  );
-}
 
 function NotificationsButton() {
   const navigate = useNavigate();
@@ -683,45 +670,5 @@ function HelpButton() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-/* ─────────────────────────── Settings slide-over ─────────────────────────── */
-
-function SettingsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  useEffect(() => {
-    onClose();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname]);
-
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-foreground/40 backdrop-blur-sm animate-in fade-in-0" onClick={onClose} />
-      <div className="absolute inset-y-0 right-0 w-[380px] max-w-[88vw] bg-card shadow-pop border-l border-border flex flex-col animate-in-up">
-        <div className="h-14 flex items-center justify-between border-b border-border px-5">
-          <h2 className="text-lg font-semibold">Settings</h2>
-          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-md hover:bg-muted">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto scrollbar-thin p-2">
-          {SETTINGS_ITEMS.map((item) => (
-            <button
-              key={item.to}
-              onClick={() => navigate(item.to)}
-              className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-foreground hover:bg-muted transition-colors"
-            >
-              <span className="grid h-8 w-8 place-items-center rounded-md bg-primary/10 text-primary">
-                <item.icon className="h-[18px] w-[18px]" />
-              </span>
-              {item.label}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
   );
 }

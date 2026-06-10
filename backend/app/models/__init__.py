@@ -2,6 +2,8 @@
 from app.core.database import Base  # noqa: F401
 from app.models.announcement import Announcement  # noqa: F401
 from app.models.audit import AuditLog  # noqa: F401
+from app.models.birthday import BirthdayWish  # noqa: F401
+from app.models.document import EmployeeDocument  # noqa: F401
 from app.models.attendance import AttendanceDaily, AttendanceLog  # noqa: F401
 from app.models.employee import (  # noqa: F401
     Employee,
@@ -23,13 +25,14 @@ from app.models.organization import (
     OrganizationProfile,
     WorkLocation,
     SalaryComponentDef,
-    SalaryTemplate,
 )  # noqa: F401
 
 __all__ = [
     "Base",
     "Announcement",
     "AuditLog",
+    "BirthdayWish",
+    "EmployeeDocument",
     "AttendanceDaily",
     "AttendanceLog",
     "Employee",
@@ -51,5 +54,4 @@ __all__ = [
     "OrganizationProfile",
     "WorkLocation",
     "SalaryComponentDef",
-    "SalaryTemplate",
 ]

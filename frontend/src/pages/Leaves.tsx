@@ -157,15 +157,24 @@ function BalanceCard({ balance: b }: { balance: LeaveBalance }) {
         <span className="text-xs font-medium text-muted-foreground">available</span>
       </div>
       <Progress value={pct} className="mt-3" color={accent} />
-      <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
-        <span>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span title="Approved leaves already taken">
           Used <span className="font-medium text-foreground tabular-nums">{b.used}</span>
         </span>
         <span className="text-border">·</span>
-        <span>
-          Pending <span className="font-medium text-foreground tabular-nums">{b.pending}</span>
+        <span
+          title="Held against pending requests — released back to available if rejected"
+          className={Number(b.pending) > 0 ? "text-warning" : undefined}
+        >
+          Pending <span className="font-medium tabular-nums">{b.pending}</span>
         </span>
       </div>
+      {Number(b.pending) > 0 ? (
+        <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+          {b.pending} day{Number(b.pending) === 1 ? "" : "s"} are tentatively held while
+          awaiting approval. They'll be released back to your available balance if rejected.
+        </p>
+      ) : null}
     </Card>
   );
 }

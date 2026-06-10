@@ -52,6 +52,20 @@ def refresh_expiry_naive() -> datetime:
     return refresh_token_expiry().replace(tzinfo=None)
 
 
+def has_active_admin(db: Session) -> bool:
+    """True once the organisation has at least one active ADMIN — i.e. it has been
+    set up. Drives both signup role assignment and the Signup page copy."""
+    return (
+        db.scalar(
+            select(User.id)
+            .join(Role, Role.id == User.role_id)
+            .where(Role.name == RoleName.ADMIN, User.is_active.is_(True))
+            .limit(1)
+        )
+        is not None
+    )
+
+
 def signup_employee(
     db: Session,
     *,
@@ -86,7 +100,12 @@ def signup_employee(
     if db.scalar(select(Employee).where(Employee.work_email == email)):
         raise ConflictError("An employee with this email already exists")
 
-    role_row = get_or_create_role(db, RoleName.EMPLOYEE)
+    # The very first account to be created (when the org has no active admin yet)
+    # bootstraps the organisation as its ADMIN (HR). Everyone after that
+    # self-signs-up as a regular EMPLOYEE. This is what makes deployment work
+    # without any seed data — the first person to sign up becomes the admin.
+    role = RoleName.EMPLOYEE if has_active_admin(db) else RoleName.ADMIN
+    role_row = get_or_create_role(db, role)
 
     emp = Employee(
         employee_code=employee_service._next_employee_code(db),
@@ -125,7 +144,7 @@ def signup_employee(
         entity="users",
         entity_id=user.id,
         ip=ip,
-        after={"email": email, "employee_id": emp.id, "role": RoleName.EMPLOYEE.value},
+        after={"email": email, "employee_id": emp.id, "role": role.value},
     )
     db.commit()
     db.refresh(user)
@@ -156,10 +175,12 @@ def _cleanup_refresh_tokens(db: Session, user_id: int) -> None:
 
 def authenticate(db: Session, email: str, password: str, ip: Optional[str] = None) -> tuple[User, str, str]:
     email = email.lower().strip()
-    # Reject off-domain addresses up-front (when an allow-list is configured)
-    # — same friendly 422 the signup flow uses, no DB lookup needed.
-    assert_email_domain_allowed(email)
     user = db.scalar(select(User).where(User.email == email))
+    # The company-domain allow-list applies to everyone EXCEPT admins, so turning
+    # on a domain restriction can never lock the org owner out of their own system
+    # (the admin may be on a different domain).
+    if not (user and user.role_name == RoleName.ADMIN):
+        assert_email_domain_allowed(email)
 
     # Temporary lockout after repeated failures (brute-force mitigation).
     if user and user.locked_until and user.locked_until > utcnow_naive():

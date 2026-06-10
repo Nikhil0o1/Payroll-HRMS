@@ -52,7 +52,9 @@ export function RoleGuard({
   min: "MANAGER" | "HR_ADMIN" | "SUPER_ADMIN";
 }) {
   const me = useAuthStore((s) => s.me);
-  const order = { EMPLOYEE: 1, MANAGER: 2, HR_ADMIN: 3, SUPER_ADMIN: 4 } as const;
+  // Two real roles: EMPLOYEE (1) and ADMIN (2). Legacy admin names map to the
+  // admin level so existing `min="HR_ADMIN"` guards keep gating at Admin.
+  const order = { EMPLOYEE: 1, ADMIN: 2, MANAGER: 2, HR_ADMIN: 2, SUPER_ADMIN: 2 } as const;
   if (!me) return null;
   if (order[me.role] < order[min]) {
     return (

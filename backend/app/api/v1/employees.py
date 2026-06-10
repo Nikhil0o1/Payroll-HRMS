@@ -5,18 +5,18 @@ import csv
 import io
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.crypto import mask_bank_account
+from app.core.storage import get_storage
 from app.core.deps import (
     ensure_self_or_privileged,
     get_current_user,
-    is_privileged,
+    require_admin,
     require_hr,
-    require_manager,
     require_step_up,
 )
 from app.core.pagination import PageParams, build_page
@@ -27,7 +27,9 @@ from app.schemas.employee import (
     BankAccountRevealOut,
     BankDetailChangeDecision,
     BankDetailChangeRequestOut,
+    DocumentExtractionOut,
     EmployeeCreate,
+    EmployeeDocumentOut,
     EmployeeListItem,
     EmployeeOut,
     EmployeeProfileOut,
@@ -46,11 +48,8 @@ def list_employees(
     manager_id: Optional[int] = Query(None, description="Filter by manager"),
     params: PageParams = Depends(),
     db: Session = Depends(get_db),
-    current: User = Depends(require_manager),
+    current: User = Depends(require_admin),
 ) -> dict:
-    # Managers without privilege only see their reports + themselves.
-    if not is_privileged(current) and current.role.name.value == "MANAGER":
-        manager_id = current.employee_id
     rows, total = employee_service.list_employees(
         db, params, department=department, status=status, manager_id=manager_id
     )
@@ -276,3 +275,91 @@ def delete_avatar(
     ensure_self_or_privileged(current, employee_id)
     emp = employee_service.set_avatar(db, employee_id, None, actor=current)
     return employee_service.employee_out_for_user(db, emp, current)
+
+
+# ───────── Onboarding documents (KYC / certificates) ─────────
+
+
+@router.post("/extract-document", response_model=DocumentExtractionOut)
+async def extract_document(
+    file: UploadFile = File(...),
+    doc_type: str = Form("OTHER"),
+    current: User = Depends(require_hr),
+) -> DocumentExtractionOut:
+    """Best-effort OCR of an identity document (PAN / Aadhaar) to pre-fill the
+    onboarding form. Stateless — runs before the employee exists, processes the
+    image on-premise, and never persists it. Returns ``engine_available=false``
+    (and empty fields) when no OCR engine is installed."""
+    from app.services import document_ocr
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    if len(raw) > employee_service.DOC_MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="Document must be 15 MB or smaller.")
+    return DocumentExtractionOut.model_validate(document_ocr.extract_fields(doc_type, raw))
+
+
+@router.get("/{employee_id}/documents", response_model=list[EmployeeDocumentOut])
+def list_documents(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> list[EmployeeDocumentOut]:
+    ensure_self_or_privileged(current, employee_id)
+    return [EmployeeDocumentOut.model_validate(d) for d in employee_service.list_documents(db, employee_id)]
+
+
+@router.post("/{employee_id}/documents", response_model=EmployeeDocumentOut, status_code=201)
+async def upload_document(
+    employee_id: int,
+    file: UploadFile = File(...),
+    doc_type: str = Form("OTHER"),
+    label: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current: User = Depends(require_hr),
+) -> EmployeeDocumentOut:
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    if len(raw) > employee_service.DOC_MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="Document must be 15 MB or smaller.")
+    doc = employee_service.save_document(
+        db,
+        employee_id,
+        doc_type=doc_type,
+        label=label,
+        filename=file.filename or "document",
+        content_type=file.content_type,
+        data=raw,
+        actor=current,
+    )
+    return EmployeeDocumentOut.model_validate(doc)
+
+
+@router.get("/{employee_id}/documents/{doc_id}/download")
+def download_document(
+    employee_id: int,
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> Response:
+    ensure_self_or_privileged(current, employee_id)
+    doc = employee_service.get_document(db, employee_id, doc_id)
+    data = get_storage().load(doc.file_key)
+    return Response(
+        content=data,
+        media_type=doc.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{doc.filename}"'},
+    )
+
+
+@router.delete("/{employee_id}/documents/{doc_id}", response_model=Message)
+def delete_document(
+    employee_id: int,
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_hr),
+) -> Message:
+    employee_service.delete_document(db, employee_id, doc_id, actor=current)
+    return Message(message="Deleted")

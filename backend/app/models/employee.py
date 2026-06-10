@@ -79,6 +79,9 @@ class EmployeeProfile(Base):
     )
 
     date_of_birth: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    # Official DOB as printed on the birth/10th certificate — often differs from
+    # the personal/actual DOB in India, and is the one used for statutory records.
+    certificate_date_of_birth: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -87,11 +90,13 @@ class EmployeeProfile(Base):
     )
     bank_ifsc: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     bank_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    bank_branch: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    bank_account_holder_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    bank_account_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # SAVINGS | CURRENT | SALARY
     pan: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # [{name, relationship, phone}]
     emergency_contacts: Mapped[Optional[list]] = mapped_column(JSON, default=list, nullable=True)
-    photo_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     employee: Mapped["Employee"] = relationship(back_populates="profile")
 

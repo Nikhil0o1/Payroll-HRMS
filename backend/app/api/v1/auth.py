@@ -38,16 +38,20 @@ def _expires_in() -> int:
 
 
 @router.get("/policy", response_model=AuthPolicy)
-def auth_policy() -> AuthPolicy:
-    """Public — returns the company-domain allow-list so the Login / Signup
-    pages can show a hint and validate before hitting the server. Empty list
-    means no restriction is in effect."""
-    return AuthPolicy(allowed_email_domains=settings.allowed_email_domains)
+def auth_policy(db: Session = Depends(get_db)) -> AuthPolicy:
+    """Public — returns the company-domain allow-list and whether the org still
+    needs to be set up, so the Login / Signup pages can render the right copy
+    and validate before hitting the server."""
+    return AuthPolicy(
+        allowed_email_domains=settings.allowed_email_domains,
+        needs_setup=not auth_service.has_active_admin(db),
+    )
 
 
 @router.post("/signup", response_model=TokenPair, status_code=201, dependencies=[Depends(_signup_limiter)])
 def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_db)) -> TokenPair:
-    """Public self-serve signup. Always creates an EMPLOYEE-role account."""
+    """Public self-serve signup. The first account (no admin yet) bootstraps the
+    org as its admin; every account after that is an EMPLOYEE."""
     user, access, refresh = auth_service.signup_employee(
         db,
         first_name=payload.first_name,

@@ -51,6 +51,9 @@ class AuthPolicy(BaseModel):
     """
 
     allowed_email_domains: list[str] = []
+    # True when the organisation has no admin yet — the next signup bootstraps
+    # the org as its owner/admin, so the Signup page shows "set up" copy.
+    needs_setup: bool = False
 
 
 class RefreshRequest(BaseModel):

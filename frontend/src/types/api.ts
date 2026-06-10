@@ -1,6 +1,9 @@
 // Mirrors backend Pydantic schemas.
 
-export type Role = "EMPLOYEE" | "MANAGER" | "HR_ADMIN" | "SUPER_ADMIN";
+// Two roles in practice: EMPLOYEE and ADMIN (HR — does everything). The legacy
+// names are kept in the type only so existing `min="HR_ADMIN"` call sites still
+// compile; the backend only ever returns "EMPLOYEE" or "ADMIN".
+export type Role = "EMPLOYEE" | "ADMIN" | "MANAGER" | "HR_ADMIN" | "SUPER_ADMIN";
 export type EmployeeStatus = "ACTIVE" | "INACTIVE";
 export type EmploymentType = "FULL_TIME" | "PART_TIME" | "CONTRACT" | "INTERN";
 export type AttendanceStatus =
@@ -58,6 +61,8 @@ export interface Tokens {
 export interface AuthPolicy {
   /** Empty list = no domain restriction in effect. */
   allowed_email_domains: string[];
+  /** True when the org has no admin yet — the next signup bootstraps it as admin. */
+  needs_setup?: boolean;
 }
 
 export type NotificationSeverity = "info" | "success" | "warning";
@@ -129,12 +134,16 @@ export interface EmployeeProfile {
   id: number;
   employee_id: number;
   date_of_birth?: string | null;
+  certificate_date_of_birth?: string | null;
   gender?: string | null;
   address?: string | null;
   bank_account_no?: string | null;
   bank_account_last4?: string | null;
   bank_ifsc?: string | null;
   bank_name?: string | null;
+  bank_branch?: string | null;
+  bank_account_holder_name?: string | null;
+  bank_account_type?: string | null;
   pan?: string | null;
   emergency_contacts?: EmergencyContact[] | null;
   pending_bank_detail_change?: boolean;
@@ -484,10 +493,11 @@ export interface WorkLocation {
   is_primary: boolean;
 }
 
-export type ComponentCategory = "EARNING" | "DEDUCTION" | "REIMBURSEMENT";
+export type ComponentCategory = "EARNING" | "DEDUCTION";
 
 export interface SalaryComponentDef {
   id: number;
+  employment_type: EmploymentType;
   code: string;
   name: string;
   category: ComponentCategory;
@@ -498,28 +508,85 @@ export interface SalaryComponentDef {
   is_active: boolean;
 }
 
-export interface SalaryTemplateComponentLine {
+export interface SalaryLine {
   code: string;
   name: string;
-  calc_type: CalcType;
-  value: number;
+  amount: number;
 }
 
-export interface SalaryTemplate {
-  id: number;
-  name: string;
-  description?: string | null;
-  annual_ctc?: number | null;
-  components: SalaryTemplateComponentLine[];
-  is_active: boolean;
+export interface SalaryPreview {
+  employment_type: EmploymentType;
+  ctc_annual: number;
+  monthly_ctc: number;
+  basic_monthly: number;
+  earnings: SalaryLine[];
+  deductions: SalaryLine[];
+  gross: number;
+  total_deductions: number;
+  net: number;
+  component_count: number;
 }
 
-export interface ApplyTemplateRequest {
+export interface BirthdayItem {
   employee_id: number;
-  template_id: number;
-  effective_from: string;
-  ctc_annual?: number;
-  basic_monthly?: number;
+  employee_code: string;
+  name: string;
+  work_email: string;
+  photo_url?: string | null;
+  designation?: string | null;
+  department?: string | null;
+  date_of_birth: string;
+  day: number;
+  month: number;
+  turning_age?: number | null;
+  next_birthday: string;
+  days_until: number;
+  is_today: boolean;
+  wished_this_year: boolean;
+  wished_at?: string | null;
+}
+
+export interface BirthdayWishResult {
+  employee_id: number;
+  sent: boolean;
+  already_wished: boolean;
+  sent_to?: string | null;
+  wished_at?: string | null;
+  message: string;
+}
+
+export type EmployeeDocType =
+  | "AADHAAR"
+  | "PAN"
+  | "MARKSHEET_10"
+  | "MARKSHEET_12"
+  | "DEGREE"
+  | "EXPERIENCE_LETTER"
+  | "PREVIOUS_PAYSLIP"
+  | "OTHER";
+
+export interface EmployeeDocument {
+  id: number;
+  employee_id: number;
+  doc_type: EmployeeDocType;
+  label?: string | null;
+  filename: string;
+  content_type?: string | null;
+  size_bytes: number;
+  created_at?: string | null;
+}
+
+export interface DocumentExtractionOut {
+  engine_available: boolean;
+  fields: {
+    name?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    date_of_birth?: string | null;
+    gender?: string | null;
+    pan?: string | null;
+    address?: string | null;
+  };
 }
 
 export interface PaySchedule {

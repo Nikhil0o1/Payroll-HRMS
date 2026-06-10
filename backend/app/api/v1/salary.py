@@ -14,7 +14,9 @@ from app.core.deps import (
 )
 from app.models.user import User
 from app.schemas.payroll import (
-    ApplyTemplateRequest,
+    CreateStructureFromTypeRequest,
+    SalaryPreviewOut,
+    SalaryPreviewRequest,
     SalaryStructureCreate,
     SalaryStructureOut,
     SalaryStructureUpdate,
@@ -22,6 +24,36 @@ from app.schemas.payroll import (
 from app.services import payroll_service
 
 router = APIRouter(prefix="/salary-structures", tags=["salary"])
+
+
+@router.post("/preview", response_model=SalaryPreviewOut)
+def preview(
+    payload: SalaryPreviewRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_hr),
+):
+    """Compute the monthly salary breakdown for an employment type + Annual CTC
+    using that type's component set. Used by the onboarding wizard."""
+    return payroll_service.preview_salary(db, payload.employment_type, payload.ctc_annual)
+
+
+@router.post("/from-type", response_model=SalaryStructureOut, status_code=201)
+def create_from_type(
+    payload: CreateStructureFromTypeRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_hr),
+):
+    """Build + persist an employee's salary structure from their employment
+    type's components and Annual CTC."""
+    s = payroll_service.create_structure_for_type(
+        db,
+        employee_id=payload.employee_id,
+        employment_type=payload.employment_type,
+        ctc_annual=payload.ctc_annual,
+        effective_from=payload.effective_from or date.today(),
+        actor=current,
+    )
+    return SalaryStructureOut.model_validate(s)
 
 
 @router.get("/by-employee/{employee_id}", response_model=list[SalaryStructureOut])
@@ -53,20 +85,6 @@ def create(
     payload: SalaryStructureCreate, db: Session = Depends(get_db), current: User = Depends(require_hr)
 ):
     return SalaryStructureOut.model_validate(payroll_service.create_structure(db, payload, actor=current))
-
-
-@router.post("/apply-template", response_model=SalaryStructureOut, status_code=201)
-def apply_template(
-    payload: ApplyTemplateRequest,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_hr),
-):
-    """Materialize a salary template into a versioned structure for the
-    given employee. Deactivates any currently-active structure (same versioning
-    semantics as ``POST /salary-structures``)."""
-    return SalaryStructureOut.model_validate(
-        payroll_service.apply_template_to_employee(db, payload, actor=current)
-    )
 
 
 @router.patch("/{structure_id}", response_model=SalaryStructureOut)

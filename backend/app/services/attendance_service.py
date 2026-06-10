@@ -142,8 +142,20 @@ def _is_holiday(db: Session, day: date) -> bool:
 def recompute_daily(db: Session, employee_id: int, day: date) -> AttendanceDaily:
     """Rebuild the day's projection from raw logs + leave/holiday context."""
     row = _daily_for(db, employee_id, day)
-    if row.is_locked:
+
+    # Honour the lock flag only if the covering month is *actually* locked
+    # (i.e. its payroll run is in LOCKED state). Without this check, an
+    # orphaned `is_locked=True` flag — left behind when a payroll run is
+    # reopened or deleted — would permanently freeze the day's projection,
+    # silently swallowing every subsequent punch and stranding `first_in`,
+    # `last_out`, `worked_minutes` and `status` on whatever stale snapshot
+    # was captured at lock time.
+    month_locked = _month_locked(db, day)
+    if row.is_locked and month_locked:
         return row
+    if row.is_locked and not month_locked:
+        # Self-heal: the day's flag is out of sync with the run state.
+        row.is_locked = False
 
     logs: list[AttendanceLog] = list(
         db.scalars(

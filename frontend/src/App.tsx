@@ -8,6 +8,7 @@ import { AttendancePage } from "@/pages/Attendance";
 import { LeavesPage } from "@/pages/Leaves";
 import { RegularizationsPage } from "@/pages/Regularizations";
 import { HolidaysPage } from "@/pages/Holidays";
+import { BirthdaysPage } from "@/pages/Birthdays";
 import { LeaveTypesPage } from "@/pages/LeaveTypes";
 import { PayslipsPage } from "@/pages/Payslips";
 import { EmployeesPage } from "@/pages/Employees";
@@ -18,12 +19,10 @@ import { ReportsPage } from "@/pages/Reports";
 import { AuditLogsPage } from "@/pages/AuditLogs";
 import { ProfilePage } from "@/pages/Profile";
 import { NotFoundPage } from "@/pages/NotFound";
-import { SettingsLayout } from "@/pages/settings/SettingsLayout";
 import OrganisationProfile from "@/pages/settings/OrganisationProfile";
 import WorkLocations from "@/pages/settings/WorkLocations";
 import Shifts from "@/pages/settings/Shifts";
 import SalaryComponents from "@/pages/settings/SalaryComponents";
-import SalaryTemplates from "@/pages/settings/SalaryTemplates";
 import PaySchedule from "@/pages/settings/PaySchedule";
 import UsersRoles from "@/pages/settings/UsersRoles";
 import Announcements from "@/pages/settings/Announcements";
@@ -89,6 +88,14 @@ export function App() {
           }
         />
         <Route
+          path="birthdays"
+          element={
+            <RoleGuard min="HR_ADMIN">
+              <BirthdaysPage />
+            </RoleGuard>
+          }
+        />
+        <Route
           path="audit-logs"
           element={
             <RoleGuard min="HR_ADMIN">
@@ -105,25 +112,64 @@ export function App() {
           }
         />
 
-        {/* Settings (HR_ADMIN+) — nested layout with vertical sub-nav */}
+        {/* Settings pages (HR_ADMIN+) — surfaced directly in the main sidebar */}
+        <Route path="settings" element={<Navigate to="/settings/organisation" replace />} />
         <Route
-          path="settings"
+          path="settings/organisation"
           element={
             <RoleGuard min="HR_ADMIN">
-              <SettingsLayout />
+              <OrganisationProfile />
             </RoleGuard>
           }
-        >
-          <Route index element={<Navigate to="organisation" replace />} />
-          <Route path="organisation" element={<OrganisationProfile />} />
-          <Route path="work-locations" element={<WorkLocations />} />
-          <Route path="shifts" element={<Shifts />} />
-          <Route path="salary-components" element={<SalaryComponents />} />
-          <Route path="salary-templates" element={<SalaryTemplates />} />
-          <Route path="pay-schedule" element={<PaySchedule />} />
-          <Route path="announcements" element={<Announcements />} />
-          <Route path="users-roles" element={<UsersRoles />} />
-        </Route>
+        />
+        <Route
+          path="settings/work-locations"
+          element={
+            <RoleGuard min="HR_ADMIN">
+              <WorkLocations />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="settings/shifts"
+          element={
+            <RoleGuard min="HR_ADMIN">
+              <Shifts />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="settings/salary-components"
+          element={
+            <RoleGuard min="HR_ADMIN">
+              <SalaryComponents />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="settings/pay-schedule"
+          element={
+            <RoleGuard min="HR_ADMIN">
+              <PaySchedule />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="settings/announcements"
+          element={
+            <RoleGuard min="HR_ADMIN">
+              <Announcements />
+            </RoleGuard>
+          }
+        />
+        <Route
+          path="settings/users-roles"
+          element={
+            <RoleGuard min="HR_ADMIN">
+              <UsersRoles />
+            </RoleGuard>
+          }
+        />
 
         <Route path="*" element={<NotFoundPage />} />
       </Route>

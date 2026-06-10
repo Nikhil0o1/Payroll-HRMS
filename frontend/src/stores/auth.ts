@@ -32,11 +32,14 @@ export const useAuthStore = create<AuthState>()(
 );
 
 export function rolesAtLeast(role: Me["role"] | undefined, min: Me["role"]): boolean {
+  // Two real roles: EMPLOYEE (1) and ADMIN (2). The legacy admin names all map
+  // to the admin level so existing `min="HR_ADMIN"` / `"MANAGER"` calls keep working.
   const order: Record<Me["role"], number> = {
     EMPLOYEE: 1,
+    ADMIN: 2,
     MANAGER: 2,
-    HR_ADMIN: 3,
-    SUPER_ADMIN: 4,
+    HR_ADMIN: 2,
+    SUPER_ADMIN: 2,
   };
   if (!role) return false;
   return order[role] >= order[min];

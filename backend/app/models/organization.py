@@ -1,12 +1,12 @@
-"""Organisation settings: profile + pay schedule, work locations, salary
-component catalog, and salary templates. These power the Settings area.
+"""Organisation settings: profile + pay schedule, work locations, and the
+per-employment-type salary component catalog. These power the Settings area.
 
 `OrganizationProfile` is a singleton row (id == 1)."""
 from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, Integer, Numeric, String, Text
+from sqlalchemy import JSON, Boolean, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -61,28 +61,23 @@ class WorkLocation(Base):
 
 
 class SalaryComponentDef(Base):
-    """Catalog of reusable salary components (earnings / deductions / reimbursements)."""
+    """Per-employment-type salary component (earning / deduction). Each
+    employment type (FULL_TIME, INTERN, …) has its own set; codes are unique
+    within a type. These sets are the templates that build an employee's salary
+    structure from their Annual CTC at onboarding."""
 
     __tablename__ = "salary_component_defs"
+    __table_args__ = (
+        UniqueConstraint("employment_type", "code", name="uq_salary_component_type_code"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    employment_type: Mapped[str] = mapped_column(String(20), default="FULL_TIME", index=True)
+    code: Mapped[str] = mapped_column(String(40), index=True)
     name: Mapped[str] = mapped_column(String(120))
-    category: Mapped[str] = mapped_column(String(16), default="EARNING")  # EARNING | DEDUCTION | REIMBURSEMENT
+    category: Mapped[str] = mapped_column(String(16), default="EARNING")  # EARNING | DEDUCTION
     calc_type: Mapped[str] = mapped_column(String(24), default="FIXED")  # FIXED | PERCENT_OF_BASIC | PERCENT_OF_CTC
     calc_value: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     consider_for_epf: Mapped[bool] = mapped_column(Boolean, default=False)
     consider_for_esi: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-
-
-class SalaryTemplate(Base):
-    __tablename__ = "salary_templates"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    annual_ctc: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), nullable=True)
-    # [{code, name, calc_type, value}]
-    components: Mapped[list] = mapped_column(JSON, default=list)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)

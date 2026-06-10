@@ -5,18 +5,29 @@ import enum
 
 
 class RoleName(str, enum.Enum):
+    """Two roles only: EMPLOYEE (self-service) and ADMIN (HR — does everything:
+    approvals, payroll runs/locks, settings, user management).
+
+    MANAGER / HR_ADMIN / SUPER_ADMIN are kept as **aliases of ADMIN** so the many
+    existing references (``require_hr``, ``require_manager``, ``require_super_admin``,
+    ``RoleName.SUPER_ADMIN`` checks, …) keep resolving to ADMIN with zero call-site
+    changes. They are not separate roles — Python enum aliasing means
+    ``RoleName.SUPER_ADMIN is RoleName.ADMIN`` and only EMPLOYEE + ADMIN are
+    iterated / stored.
+    """
+
     EMPLOYEE = "EMPLOYEE"
-    MANAGER = "MANAGER"
-    HR_ADMIN = "HR_ADMIN"
-    SUPER_ADMIN = "SUPER_ADMIN"
+    ADMIN = "ADMIN"
+    # legacy aliases → ADMIN
+    MANAGER = "ADMIN"
+    HR_ADMIN = "ADMIN"
+    SUPER_ADMIN = "ADMIN"
 
 
-# Privilege ordering for hierarchical convenience checks.
+# Privilege ordering for hierarchical convenience checks (ADMIN > EMPLOYEE).
 ROLE_RANK = {
     RoleName.EMPLOYEE: 1,
-    RoleName.MANAGER: 2,
-    RoleName.HR_ADMIN: 3,
-    RoleName.SUPER_ADMIN: 4,
+    RoleName.ADMIN: 2,
 }
 
 

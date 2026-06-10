@@ -16,4 +16,9 @@ weasyprint==62.1
 Jinja2==3.1.4
 httpx==0.27.0
 tzdata==2024.1
+Pillow==10.3.0
+# Document OCR auto-fill (PAN/Aadhaar). Needs the Tesseract binary on the host
+# (e.g. `winget install UB-Mannheim.TesseractOCR` / `apt install tesseract-ocr`).
+# Without it, uploads still work — auto-fill is simply skipped.
+pytesseract==0.3.10
 pytest==8.2.0

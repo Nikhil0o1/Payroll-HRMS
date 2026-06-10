@@ -59,10 +59,13 @@ def require_roles(*roles: RoleName):
     return _guard
 
 
-# Convenience guards
-require_manager = require_roles(RoleName.MANAGER, RoleName.HR_ADMIN, RoleName.SUPER_ADMIN)
-require_hr = require_roles(RoleName.HR_ADMIN, RoleName.SUPER_ADMIN)
-require_super_admin = require_roles(RoleName.SUPER_ADMIN)
+# Convenience guards. There are two roles — EMPLOYEE and ADMIN — so every admin
+# gate is the same gate. `require_admin` is the canonical name; the others are
+# kept as aliases so existing endpoints don't need to change.
+require_admin = require_roles(RoleName.ADMIN)
+require_manager = require_admin
+require_hr = require_admin
+require_super_admin = require_admin
 
 
 def require_step_up(*purposes: str):

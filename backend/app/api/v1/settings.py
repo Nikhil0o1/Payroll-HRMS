@@ -1,5 +1,5 @@
 """Settings endpoints: organisation profile, work locations, salary
-components, salary templates, pay schedule, and user / role admin.
+components, pay schedule, and user / role admin.
 
 All endpoints in this module require HR_ADMIN or higher.
 """
@@ -28,9 +28,6 @@ from app.schemas.organization import (
     SalaryComponentCreate,
     SalaryComponentOut,
     SalaryComponentUpdate,
-    SalaryTemplateCreate,
-    SalaryTemplateOut,
-    SalaryTemplateUpdate,
     UserListItem,
     WorkLocationCreate,
     WorkLocationOut,
@@ -176,13 +173,16 @@ def delete_work_location(
 
 @router.get("/salary-components", response_model=List[SalaryComponentOut])
 def list_salary_components(
-    category: Optional[str] = Query(None, description="EARNING | DEDUCTION | REIMBURSEMENT"),
+    category: Optional[str] = Query(None, description="EARNING | DEDUCTION"),
+    employment_type: Optional[str] = Query(None, description="FULL_TIME | PART_TIME | CONTRACT | INTERN"),
     db: Session = Depends(get_db),
     current: User = Depends(require_hr),
 ):
     return [
         SalaryComponentOut.model_validate(c)
-        for c in organization_service.list_salary_components(db, category=category)
+        for c in organization_service.list_salary_components(
+            db, category=category, employment_type=employment_type
+        )
     ]
 
 
@@ -216,63 +216,6 @@ def delete_salary_component(
     current: User = Depends(require_hr),
 ):
     organization_service.delete_salary_component(db, component_id, actor=current)
-    return Message(message="Deleted")
-
-
-# ───────── Salary templates ─────────
-
-
-@router.get("/salary-templates", response_model=List[SalaryTemplateOut])
-def list_salary_templates(
-    db: Session = Depends(get_db), current: User = Depends(require_hr)
-):
-    return [
-        SalaryTemplateOut.model_validate(t)
-        for t in organization_service.list_salary_templates(db)
-    ]
-
-
-@router.post("/salary-templates", response_model=SalaryTemplateOut, status_code=201)
-def create_salary_template(
-    payload: SalaryTemplateCreate,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_hr),
-):
-    return SalaryTemplateOut.model_validate(
-        organization_service.create_salary_template(db, payload, actor=current)
-    )
-
-
-@router.get("/salary-templates/{template_id}", response_model=SalaryTemplateOut)
-def get_salary_template(
-    template_id: int,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_hr),
-):
-    return SalaryTemplateOut.model_validate(
-        organization_service.get_salary_template(db, template_id)
-    )
-
-
-@router.patch("/salary-templates/{template_id}", response_model=SalaryTemplateOut)
-def update_salary_template(
-    template_id: int,
-    payload: SalaryTemplateUpdate,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_hr),
-):
-    return SalaryTemplateOut.model_validate(
-        organization_service.update_salary_template(db, template_id, payload, actor=current)
-    )
-
-
-@router.delete("/salary-templates/{template_id}", response_model=Message)
-def delete_salary_template(
-    template_id: int,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_hr),
-):
-    organization_service.delete_salary_template(db, template_id, actor=current)
     return Message(message="Deleted")
 
 

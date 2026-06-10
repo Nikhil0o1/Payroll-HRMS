@@ -28,11 +28,10 @@ from app.models.enums import (
 )
 from app.models.holiday import Holiday
 from app.models.leave import LeaveRequest, LeaveType
-from app.models.organization import OrganizationProfile, SalaryComponentDef, SalaryTemplate
+from app.models.organization import OrganizationProfile, SalaryComponentDef
 from app.models.payroll import PayrollDetail, PayrollRun, Payslip, SalaryStructure
 from app.models.user import User
 from app.schemas.payroll import (
-    ApplyTemplateRequest,
     PayrollRunCreate,
     SalaryStructureCreate,
     SalaryStructureUpdate,
@@ -116,168 +115,6 @@ _CATEGORY_TO_TYPE: dict[str, ComponentType] = {
 }
 
 
-def _compute_basic_monthly(annual_ctc: float, lines: list[dict]) -> float:
-    """Best-effort BASIC monthly amount from a template's component lines.
-
-    The structure stores ``basic_monthly`` separately so PERCENT_OF_BASIC items
-    have an anchor at runtime. Templates encode BASIC as a regular component
-    (typically PERCENT_OF_CTC=50). We compute its monthly amount here so the
-    derived structure stays mathematically consistent with the template.
-    Falls back to 0 (resolver will then default to 50% of monthly CTC).
-    """
-    monthly_ctc = float(annual_ctc) / 12.0 if annual_ctc else 0.0
-    for raw in lines:
-        if (raw.get("code") or "").upper() != "BASIC":
-            continue
-        calc = (raw.get("calc") or raw.get("calc_type") or "").upper()
-        value = float(raw.get("value") or 0)
-        if calc == "FIXED":
-            return value
-        if calc == "PERCENT_OF_CTC":
-            return monthly_ctc * value / 100.0
-        # PERCENT_OF_BASIC for the BASIC component itself is nonsensical.
-    return 0.0
-
-
-def apply_template_to_employee(
-    db: Session,
-    payload: ApplyTemplateRequest,
-    actor: User,
-) -> SalaryStructure:
-    """Materialize a salary template into a versioned structure for one employee.
-
-    Looks up each template line in the salary component catalog to determine its
-    EARNING/DEDUCTION type (templates only carry ``calc_type`` and ``value``;
-    they don't repeat the component category). The resulting structure is a
-    standalone snapshot — future edits to the template do not retroactively
-    change historical pay.
-    """
-    emp = db.get(Employee, payload.employee_id)
-    if not emp:
-        raise NotFoundError("Employee not found")
-
-    template = db.get(SalaryTemplate, payload.template_id)
-    if template is None:
-        raise NotFoundError("Salary template not found")
-    if not template.is_active:
-        raise DomainError(
-            f"Template '{template.name}' is inactive and can't be applied.",
-            status_code=400,
-        )
-    template_lines: list[dict] = list(template.components or [])
-    if not template_lines:
-        raise DomainError(
-            f"Template '{template.name}' has no components configured.",
-            status_code=400,
-        )
-
-    # Look up component categories in one round-trip.
-    codes = [(line.get("code") or "").upper() for line in template_lines if line.get("code")]
-    defs_by_code: dict[str, SalaryComponentDef] = {
-        d.code: d
-        for d in db.scalars(
-            select(SalaryComponentDef).where(SalaryComponentDef.code.in_(codes))
-        )
-    }
-    missing = sorted({c for c in codes if c not in defs_by_code})
-    if missing:
-        raise DomainError(
-            "Template references components that no longer exist in the catalog: "
-            + ", ".join(missing),
-            status_code=400,
-        )
-
-    structure_components: list[dict] = []
-    for line in template_lines:
-        code = (line.get("code") or "").upper()
-        comp_def = defs_by_code[code]
-        ctype = _CATEGORY_TO_TYPE.get(comp_def.category)
-        if ctype is None:
-            raise DomainError(
-                f"Component '{code}' has unsupported category {comp_def.category!r}.",
-                status_code=400,
-            )
-        calc_raw = (line.get("calc_type") or "FIXED").upper()
-        try:
-            calc = CalcType(calc_raw)
-        except ValueError as exc:
-            raise DomainError(
-                f"Component '{code}' has invalid calc_type {calc_raw!r}.",
-                status_code=400,
-            ) from exc
-        structure_components.append(
-            {
-                "code": code,
-                "name": line.get("name") or comp_def.name,
-                "type": ctype.value,
-                "calc": calc.value,
-                "value": float(line.get("value") or 0),
-            }
-        )
-
-    # Resolve annual CTC. Order:
-    #   1. Explicit caller override (per-employee CTC tweak).
-    #   2. Template's stored CTC.
-    #   3. Inferred from FIXED earning components (sum × 12). This makes simple
-    #      templates like "Intern → BASIC FIXED 20000" work without needing
-    #      the admin to also set CTC explicitly on the template.
-    annual_ctc: float = 0.0
-    if payload.ctc_annual is not None and payload.ctc_annual > 0:
-        annual_ctc = float(payload.ctc_annual)
-    elif template.annual_ctc and float(template.annual_ctc) > 0:
-        annual_ctc = float(template.annual_ctc)
-    else:
-        inferred_monthly = sum(
-            float(c.get("value") or 0)
-            for c in structure_components
-            if c.get("type") == ComponentType.EARNING.value and c.get("calc") == CalcType.FIXED.value
-        )
-        annual_ctc = inferred_monthly * 12.0
-
-    basic_monthly = (
-        float(payload.basic_monthly)
-        if payload.basic_monthly is not None
-        else _compute_basic_monthly(annual_ctc, template_lines)
-    )
-
-    # Deactivate any currently-active structure (mirrors create_structure).
-    for s in db.scalars(
-        select(SalaryStructure).where(
-            SalaryStructure.employee_id == payload.employee_id,
-            SalaryStructure.is_active.is_(True),
-        )
-    ):
-        s.is_active = False
-
-    structure = SalaryStructure(
-        employee_id=payload.employee_id,
-        effective_from=payload.effective_from,
-        ctc_annual=annual_ctc,
-        basic_monthly=basic_monthly,
-        components=structure_components,
-        is_active=True,
-    )
-    db.add(structure)
-    db.flush()
-    record_audit(
-        db,
-        actor=actor,
-        action="salary.apply_template",
-        entity="salary_structures",
-        entity_id=structure.id,
-        after={
-            "employee_id": structure.employee_id,
-            "template_id": template.id,
-            "template_name": template.name,
-            "ctc_annual": float(structure.ctc_annual),
-            "components": structure_components,
-        },
-    )
-    db.commit()
-    db.refresh(structure)
-    return structure
-
-
 def update_structure(db: Session, structure_id: int, payload: SalaryStructureUpdate, actor: User) -> SalaryStructure:
     s = db.get(SalaryStructure, structure_id)
     if not s:
@@ -306,9 +143,109 @@ def update_structure(db: Session, structure_id: int, payload: SalaryStructureUpd
     return s
 
 
-# ---------- Payroll calculation ----------
+# ---------- Salary structure from an employment-type component set ----------
 def _round(value: float) -> float:
     return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _looks_like_basic(code: str, name: str) -> bool:
+    """Identify the 'base pay' component without depending on a single magic
+    code. The Salary Components page lets admins pick any code (BASIC, BAS,
+    BASE_PAY, …), so we match on the code prefix or the human name. This is the
+    anchor for PERCENT_OF_BASIC components and the headline earning."""
+    c = (code or "").strip().upper()
+    n = (name or "").strip().lower()
+    return c.startswith("BAS") or "basic" in n or "base pay" in n or "base salary" in n
+
+
+def _components_for_employment_type(
+    db: Session, employment_type: str, ctc_annual: float
+) -> Tuple[float, list]:
+    """Map an employment type's component catalog into structure components and
+    derive monthly Basic. Returns (basic_monthly, structure_components)."""
+    comps = list(
+        db.scalars(
+            select(SalaryComponentDef)
+            .where(
+                SalaryComponentDef.employment_type == employment_type.upper(),
+                SalaryComponentDef.is_active.is_(True),
+            )
+            .order_by(SalaryComponentDef.category.desc(), SalaryComponentDef.name)
+        )
+    )
+    monthly_ctc = float(ctc_annual) / 12.0
+    structure_components: list[dict] = []
+    basic_monthly = 0.0
+    for c in comps:
+        structure_components.append(
+            {
+                "code": c.code,
+                "name": c.name,
+                "type": c.category,       # EARNING | DEDUCTION
+                "calc": c.calc_type,      # FIXED | PERCENT_OF_BASIC | PERCENT_OF_CTC
+                "value": float(c.calc_value),
+            }
+        )
+        if basic_monthly <= 0 and _looks_like_basic(c.code, c.name):
+            if c.calc_type == "FIXED":
+                basic_monthly = float(c.calc_value)
+            elif c.calc_type == "PERCENT_OF_CTC":
+                basic_monthly = monthly_ctc * float(c.calc_value) / 100.0
+            elif c.calc_type == "PERCENT_OF_BASIC":
+                basic_monthly = monthly_ctc * float(c.calc_value) / 100.0
+    if basic_monthly <= 0:
+        basic_monthly = monthly_ctc * 0.5  # sensible fallback when no Basic configured
+    return _round(basic_monthly), structure_components
+
+
+def preview_salary(db: Session, employment_type: str, ctc_annual: float) -> dict:
+    """Compute the monthly salary breakdown an employee of *employment_type*
+    would get for *ctc_annual*, using that type's components. Pure preview — no
+    DB writes. Powers the onboarding wizard's salary step."""
+    from types import SimpleNamespace
+
+    basic_monthly, components = _components_for_employment_type(db, employment_type, ctc_annual)
+    structure = SimpleNamespace(ctc_annual=ctc_annual, basic_monthly=basic_monthly, components=components)
+    earnings, deductions = _resolve_components(structure)
+    gross = _round(sum(e["amount"] for e in earnings))
+    total_ded = _round(sum(d["amount"] for d in deductions))
+    return {
+        "employment_type": employment_type.upper(),
+        "ctc_annual": float(ctc_annual),
+        "monthly_ctc": _round(float(ctc_annual) / 12.0),
+        "basic_monthly": basic_monthly,
+        "earnings": earnings,
+        "deductions": deductions,
+        "gross": gross,
+        "total_deductions": total_ded,
+        "net": _round(gross - total_ded),
+        "component_count": len(components),
+    }
+
+
+def create_structure_for_type(
+    db: Session,
+    *,
+    employee_id: int,
+    employment_type: str,
+    ctc_annual: float,
+    effective_from: date,
+    actor: User,
+) -> "SalaryStructure":
+    """Build + persist a versioned salary structure for an employee from their
+    employment type's component set (used at onboarding)."""
+    basic_monthly, components = _components_for_employment_type(db, employment_type, ctc_annual)
+    payload = SalaryStructureCreate(
+        employee_id=employee_id,
+        effective_from=effective_from,
+        ctc_annual=ctc_annual,
+        basic_monthly=basic_monthly,
+        components=components,
+    )
+    return create_structure(db, payload, actor)
+
+
+# ---------- Payroll calculation ----------
 
 
 def _employee_weekly_offs(db: Session, employee_id: int) -> set[int]:
@@ -477,8 +414,13 @@ def _resolve_components(structure: SalaryStructure) -> Tuple[list, list]:
         else:
             deductions.append(item)
 
-    # Always include Basic as the first earning if not already listed.
-    if not any(e["code"] == "BASIC" for e in earnings):
+    # Legacy safety net only: a structure that has a basic_monthly but no earning
+    # lines at all (older or hand-built records) still shows Basic. We must NOT
+    # inject when earnings already exist — the components list is the source of
+    # truth, and fabricating a second "Basic" double-counts base pay (the bug
+    # that made a ₹20k intern show ₹30k gross when their component was coded
+    # "BAS" instead of "BASIC").
+    if not earnings and basic > 0:
         earnings.insert(0, {"code": "BASIC", "name": "Basic", "amount": _round(basic)})
 
     return earnings, deductions
@@ -744,9 +686,16 @@ def lock_run(db: Session, run_id: int, actor: User) -> PayrollRun:
 
     # Freeze daily projections for the period in a single atomic UPDATE so the
     # lock can never half-apply (some rows frozen, run not marked LOCKED).
+    #
+    # Important: only freeze days that have *actually happened* (≤ today). For
+    # a mid-month lock (rare but supported, e.g. early payroll closure for a
+    # partial month), future days must remain editable so employees can keep
+    # punching for the rest of the month — otherwise the next month's payroll
+    # would inherit a frozen, stale projection.
+    freeze_through = min(end, utcnow_naive().date())
     db.execute(
         update(AttendanceDaily)
-        .where(AttendanceDaily.work_date >= start, AttendanceDaily.work_date <= end)
+        .where(AttendanceDaily.work_date >= start, AttendanceDaily.work_date <= freeze_through)
         .values(is_locked=True)
     )
 

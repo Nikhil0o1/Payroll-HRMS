@@ -96,3 +96,51 @@ If you didn't expect this email, please contact your HR administrator.
 """
 
     return subject, html, text
+
+
+def birthday_wish(*, first_name: str, org_name: str) -> tuple[str, str, str]:
+    """Returns (subject, html, text) for an employee birthday-wish email."""
+    subject = f"Happy Birthday, {first_name}! 🎉"
+
+    html = f"""\
+<!doctype html>
+<html>
+  <body style="font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:#f5f5f7; margin:0; padding:32px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px; margin:0 auto; background:#ffffff; border-radius:16px; overflow:hidden; border:1px solid #e5e7eb;">
+      <tr>
+        <td style="background:linear-gradient(135deg,#ff6a3d,#e23744); color:#ffffff; padding:40px 32px; text-align:center;">
+          <div style="font-size:44px; line-height:1;">🎂</div>
+          <div style="font-size:26px; font-weight:700; margin-top:12px;">
+            Happy Birthday, {first_name}!
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:30px 32px; color:#0f172a; font-size:15px; line-height:1.7; text-align:center;">
+          <p style="margin:0 0 14px 0;">
+            Wishing you a wonderful day filled with happiness and a year ahead full of
+            success. Thank you for being a valued part of the team. 🎈
+          </p>
+          <p style="margin:18px 0 0 0; font-weight:600;">
+            — The team at {org_name}
+          </p>
+        </td>
+      </tr>
+    </table>
+    <div style="text-align:center; color:#94a3b8; font-size:11.5px; margin-top:18px;">
+      This is an automated message from {org_name}. Do not reply.
+    </div>
+  </body>
+</html>
+"""
+
+    text = f"""\
+Happy Birthday, {first_name}!
+
+Wishing you a wonderful day filled with happiness and a year ahead full of
+success. Thank you for being a valued part of the team.
+
+— The team at {org_name}
+"""
+
+    return subject, html, text

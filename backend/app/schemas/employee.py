@@ -19,11 +19,15 @@ class EmergencyContact(BaseModel):
 
 class EmployeeProfileBase(BaseModel):
     date_of_birth: Optional[date] = None
+    certificate_date_of_birth: Optional[date] = None
     gender: Optional[str] = None
     address: Optional[str] = None
     bank_account_no: Optional[str] = None
     bank_ifsc: Optional[str] = None
     bank_name: Optional[str] = None
+    bank_branch: Optional[str] = None
+    bank_account_holder_name: Optional[str] = None
+    bank_account_type: Optional[str] = None  # SAVINGS | CURRENT | SALARY
     pan: Optional[str] = None
     emergency_contacts: Optional[List[EmergencyContact]] = None
 
@@ -70,6 +74,32 @@ class BankAccountRevealOut(BaseModel):
     bank_account_no_masked: Optional[str] = None
 
 
+class EmployeeDocumentOut(ORMModel):
+    id: int
+    employee_id: int
+    doc_type: str
+    label: Optional[str] = None
+    filename: str
+    content_type: Optional[str] = None
+    size_bytes: int
+    created_at: Optional[datetime] = None
+
+
+class ExtractedDocFields(BaseModel):
+    name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    gender: Optional[str] = None
+    pan: Optional[str] = None
+    address: Optional[str] = None
+
+
+class DocumentExtractionOut(BaseModel):
+    engine_available: bool
+    fields: ExtractedDocFields = ExtractedDocFields()
+
+
 class EmployeeBase(BaseModel):
     employee_code: Optional[str] = Field(default=None, max_length=32)
     first_name: str = Field(min_length=1, max_length=100)
@@ -90,6 +120,21 @@ class EmployeeCreate(EmployeeBase):
     create_user: bool = True
     role: RoleName = RoleName.EMPLOYEE
     initial_password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+
+    # Optional profile details captured during onboarding. These are set
+    # DIRECTLY on the new employee's profile (the admin is the authority for the
+    # first entry); later bank edits go through the secure change-request flow.
+    date_of_birth: Optional[date] = None
+    certificate_date_of_birth: Optional[date] = None
+    gender: Optional[str] = None
+    address: Optional[str] = None
+    pan: Optional[str] = None
+    bank_account_no: Optional[str] = None
+    bank_ifsc: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_branch: Optional[str] = None
+    bank_account_holder_name: Optional[str] = None
+    bank_account_type: Optional[str] = None
 
     @field_validator("initial_password")
     @classmethod

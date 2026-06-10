@@ -1,5 +1,5 @@
 """Service layer for the Settings area: organisation profile, work locations,
-salary components, salary templates, and pay schedule.
+salary components, and pay schedule.
 
 `OrganizationProfile` is a singleton row (id == 1). The first call to
 :func:`get_profile` lazily creates it with sensible defaults, so the API can
@@ -23,7 +23,6 @@ from app.models.enums import RoleName
 from app.models.organization import (
     OrganizationProfile,
     SalaryComponentDef,
-    SalaryTemplate,
     WorkLocation,
 )
 from app.models.user import Role, User
@@ -33,8 +32,6 @@ from app.schemas.organization import (
     PayScheduleUpdate,
     SalaryComponentCreate,
     SalaryComponentUpdate,
-    SalaryTemplateCreate,
-    SalaryTemplateUpdate,
     WorkLocationCreate,
     WorkLocationUpdate,
 )
@@ -183,19 +180,31 @@ def delete_work_location(
 
 
 def list_salary_components(
-    db: Session, *, category: Optional[str] = None
+    db: Session, *, category: Optional[str] = None, employment_type: Optional[str] = None
 ) -> List[SalaryComponentDef]:
     stmt = select(SalaryComponentDef)
     if category:
         stmt = stmt.where(SalaryComponentDef.category == category.upper())
-    return list(db.scalars(stmt.order_by(SalaryComponentDef.category, SalaryComponentDef.name)))
+    if employment_type:
+        stmt = stmt.where(SalaryComponentDef.employment_type == employment_type.upper())
+    # Earnings first, then deductions; stable by name within each.
+    return list(
+        db.scalars(stmt.order_by(SalaryComponentDef.category.desc(), SalaryComponentDef.name))
+    )
 
 
 def create_salary_component(
     db: Session, payload: SalaryComponentCreate, *, actor: Optional[User] = None
 ) -> SalaryComponentDef:
-    if db.scalar(select(SalaryComponentDef).where(SalaryComponentDef.code == payload.code)):
-        raise ConflictError(f"A component with code {payload.code} already exists")
+    if db.scalar(
+        select(SalaryComponentDef).where(
+            SalaryComponentDef.employment_type == payload.employment_type,
+            SalaryComponentDef.code == payload.code,
+        )
+    ):
+        raise ConflictError(
+            f"A component with code {payload.code} already exists for {payload.employment_type}"
+        )
     comp = SalaryComponentDef(**payload.model_dump())
     db.add(comp)
     db.flush()
@@ -224,8 +233,13 @@ def update_salary_component(
         raise NotFoundError("Salary component not found")
     data = payload.model_dump(exclude_unset=True)
     if "code" in data and data["code"] != comp.code:
-        if db.scalar(select(SalaryComponentDef).where(SalaryComponentDef.code == data["code"])):
-            raise ConflictError(f"A component with code {data['code']} already exists")
+        if db.scalar(
+            select(SalaryComponentDef).where(
+                SalaryComponentDef.employment_type == comp.employment_type,
+                SalaryComponentDef.code == data["code"],
+            )
+        ):
+            raise ConflictError(f"A component with code {data['code']} already exists for this type")
     for k, v in data.items():
         setattr(comp, k, v)
     record_audit(
@@ -256,93 +270,6 @@ def delete_salary_component(
         before={"code": comp.code, "name": comp.name},
     )
     db.delete(comp)
-    db.commit()
-
-
-# ────────────────────── Salary templates ──────────────────────
-
-
-def list_salary_templates(db: Session) -> List[SalaryTemplate]:
-    return list(db.scalars(select(SalaryTemplate).order_by(SalaryTemplate.name.asc())))
-
-
-def get_salary_template(db: Session, template_id: int) -> SalaryTemplate:
-    t = db.get(SalaryTemplate, template_id)
-    if t is None:
-        raise NotFoundError("Salary template not found")
-    return t
-
-
-def create_salary_template(
-    db: Session, payload: SalaryTemplateCreate, *, actor: Optional[User] = None
-) -> SalaryTemplate:
-    if db.scalar(select(SalaryTemplate).where(SalaryTemplate.name == payload.name)):
-        raise ConflictError(f"A salary template named {payload.name!r} already exists")
-    t = SalaryTemplate(
-        name=payload.name,
-        description=payload.description,
-        annual_ctc=payload.annual_ctc,
-        components=[c.model_dump() for c in payload.components],
-        is_active=payload.is_active,
-    )
-    db.add(t)
-    db.flush()
-    record_audit(
-        db,
-        actor=actor,
-        action="settings.salary_template.create",
-        entity="salary_templates",
-        entity_id=t.id,
-        after={"name": t.name, "annual_ctc": t.annual_ctc},
-    )
-    db.commit()
-    db.refresh(t)
-    return t
-
-
-def update_salary_template(
-    db: Session,
-    template_id: int,
-    payload: SalaryTemplateUpdate,
-    *,
-    actor: Optional[User] = None,
-) -> SalaryTemplate:
-    t = get_salary_template(db, template_id)
-    data = payload.model_dump(exclude_unset=True)
-    if "components" in data and data["components"] is not None:
-        # already a list of dicts
-        t.components = data.pop("components")
-    if "name" in data and data["name"] != t.name:
-        if db.scalar(select(SalaryTemplate).where(SalaryTemplate.name == data["name"])):
-            raise ConflictError(f"A salary template named {data['name']!r} already exists")
-    for k, v in data.items():
-        setattr(t, k, v)
-    record_audit(
-        db,
-        actor=actor,
-        action="settings.salary_template.update",
-        entity="salary_templates",
-        entity_id=t.id,
-        after={k: v for k, v in data.items() if k != "components"},
-    )
-    db.commit()
-    db.refresh(t)
-    return t
-
-
-def delete_salary_template(
-    db: Session, template_id: int, *, actor: Optional[User] = None
-) -> None:
-    t = get_salary_template(db, template_id)
-    record_audit(
-        db,
-        actor=actor,
-        action="settings.salary_template.delete",
-        entity="salary_templates",
-        entity_id=t.id,
-        before={"name": t.name},
-    )
-    db.delete(t)
     db.commit()
 
 

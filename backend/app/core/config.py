@@ -143,9 +143,13 @@ class Settings(BaseSettings):
             problems.append("DATABASE_URL must point to PostgreSQL in production, not SQLite")
         if self.STORAGE_BACKEND == "s3" and not self.S3_BUCKET:
             problems.append("S3_BUCKET is required when STORAGE_BACKEND=s3")
-        if self.FIRST_SUPERADMIN_PASSWORD in {"", "Admin@12345"}:
+        # Only required when the env-seed admin is actually created. If
+        # AUTO_BOOTSTRAP_ON_STARTUP is off, the org is bootstrapped by the first
+        # self-signup instead, so no seed password is needed.
+        if self.AUTO_BOOTSTRAP_ON_STARTUP and self.FIRST_SUPERADMIN_PASSWORD in {"", "Admin@12345"}:
             problems.append(
-                "FIRST_SUPERADMIN_PASSWORD must be changed from its default and kept secret"
+                "FIRST_SUPERADMIN_PASSWORD must be changed from its default and kept secret, "
+                "or set AUTO_BOOTSTRAP_ON_STARTUP=false to let the first signup become the admin"
             )
 
         if problems:

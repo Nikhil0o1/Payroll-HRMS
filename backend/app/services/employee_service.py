@@ -4,8 +4,10 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import re
 import secrets
 import string
+import uuid
 from datetime import date
 from typing import Optional, Tuple
 
@@ -18,7 +20,9 @@ from app.core.crypto import mask_bank_account
 from app.core.email_policy import assert_email_domain_allowed
 from app.core.exceptions import ConflictError, DomainError, NotFoundError
 from app.core.pagination import PageParams, paginate
+from app.core.storage import get_storage
 from app.core.time import utcnow_naive
+from app.models.document import EmployeeDocument
 from app.models.employee import Employee, EmployeeBankDetailChangeRequest, EmployeeProfile
 from app.models.enums import BankDetailChangeStatus, EmployeeStatus, RoleName
 from app.models.user import User
@@ -76,6 +80,9 @@ def employee_out_for_user(db: Session, emp: Employee, current: User) -> Employee
             out.profile.bank_account_last4 = None
             out.profile.bank_ifsc = None
             out.profile.bank_name = None
+            out.profile.bank_branch = None
+            out.profile.bank_account_holder_name = None
+            out.profile.bank_account_type = None
     return out
 
 
@@ -204,7 +211,32 @@ def create_employee(db: Session, payload: EmployeeCreate, actor: Optional[User] 
     )
     db.add(emp)
     db.flush()
-    db.add(EmployeeProfile(employee_id=emp.id, emergency_contacts=[]))
+    profile = EmployeeProfile(employee_id=emp.id, emergency_contacts=[])
+    # Initial profile details from the onboarding wizard — set directly (the
+    # secure change-request flow only guards *edits* to existing bank details).
+    if payload.date_of_birth:
+        profile.date_of_birth = payload.date_of_birth
+    if payload.certificate_date_of_birth:
+        profile.certificate_date_of_birth = payload.certificate_date_of_birth
+    if (payload.gender or "").strip():
+        profile.gender = payload.gender.strip()
+    if (payload.address or "").strip():
+        profile.address = payload.address.strip()
+    if (payload.pan or "").strip():
+        profile.pan = payload.pan.strip().upper()
+    if (payload.bank_ifsc or "").strip():
+        profile.bank_ifsc = payload.bank_ifsc.strip().upper()
+    if (payload.bank_name or "").strip():
+        profile.bank_name = payload.bank_name.strip()
+    if (payload.bank_branch or "").strip():
+        profile.bank_branch = payload.bank_branch.strip()
+    if (payload.bank_account_holder_name or "").strip():
+        profile.bank_account_holder_name = payload.bank_account_holder_name.strip()
+    if (payload.bank_account_type or "").strip():
+        profile.bank_account_type = payload.bank_account_type.strip().upper()
+    if (payload.bank_account_no or "").strip():
+        profile.set_bank_account_no(payload.bank_account_no.strip())
+    db.add(profile)
 
     # Every employee must have a working shift — assign the org default.
     default_shift = shift_service.get_default_shift(db)
@@ -626,6 +658,99 @@ def set_avatar(
     db.commit()
     db.refresh(emp)
     return emp
+
+
+# ---------- Documents ----------
+DOC_MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
+ALLOWED_DOC_TYPES = {
+    "AADHAAR",
+    "PAN",
+    "MARKSHEET_10",
+    "MARKSHEET_12",
+    "DEGREE",
+    "EXPERIENCE_LETTER",
+    "PREVIOUS_PAYSLIP",
+    "OTHER",
+}
+
+
+def list_documents(db: Session, employee_id: int) -> list[EmployeeDocument]:
+    return list(
+        db.scalars(
+            select(EmployeeDocument)
+            .where(EmployeeDocument.employee_id == employee_id)
+            .order_by(EmployeeDocument.id.desc())
+        )
+    )
+
+
+def get_document(db: Session, employee_id: int, doc_id: int) -> EmployeeDocument:
+    doc = db.get(EmployeeDocument, doc_id)
+    if not doc or doc.employee_id != employee_id:
+        raise NotFoundError("Document not found")
+    return doc
+
+
+def save_document(
+    db: Session,
+    employee_id: int,
+    *,
+    doc_type: str,
+    label: Optional[str],
+    filename: str,
+    content_type: Optional[str],
+    data: bytes,
+    actor: Optional[User] = None,
+) -> EmployeeDocument:
+    get_with_profile(db, employee_id)  # ensure the employee exists
+    dt = (doc_type or "OTHER").upper()
+    if dt not in ALLOWED_DOC_TYPES:
+        dt = "OTHER"
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", (filename or "document").strip()) or "document"
+    key = f"employee_docs/{employee_id}/{uuid.uuid4().hex}_{safe_name}"
+    get_storage().save(key, data, content_type=content_type or "application/octet-stream")
+    doc = EmployeeDocument(
+        employee_id=employee_id,
+        doc_type=dt,
+        label=(label or "").strip() or None,
+        file_key=key,
+        filename=safe_name,
+        content_type=content_type,
+        size_bytes=len(data),
+        uploaded_by_user_id=actor.id if actor else None,
+    )
+    db.add(doc)
+    db.flush()
+    record_audit(
+        db,
+        actor=actor,
+        action="employee.document_upload",
+        entity="employee_documents",
+        entity_id=doc.id,
+        after={"employee_id": employee_id, "doc_type": dt, "filename": safe_name},
+    )
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+def delete_document(db: Session, employee_id: int, doc_id: int, actor: Optional[User] = None) -> None:
+    doc = get_document(db, employee_id, doc_id)
+    try:
+        # Best-effort storage cleanup; never block the delete on it.
+        get_storage()  # noqa: F841 — local storage delete isn't part of the abstraction
+    except Exception:
+        pass
+    record_audit(
+        db,
+        actor=actor,
+        action="employee.document_delete",
+        entity="employee_documents",
+        entity_id=doc.id,
+        before={"employee_id": employee_id, "doc_type": doc.doc_type, "filename": doc.filename},
+    )
+    db.delete(doc)
+    db.commit()
 
 
 # ---------- Bulk import ----------

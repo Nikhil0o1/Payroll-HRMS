@@ -146,6 +146,14 @@ class Settings(BaseSettings):
             problems.append("BACKEND_CORS_ORIGINS must not contain '*' in production")
         if self.is_sqlite:
             problems.append("DATABASE_URL must point to PostgreSQL in production, not SQLite")
+        # Catch the classic "forgot to set the deployed frontend URL" mistake.
+        # Without this guard, onboarding emails silently link to localhost — which
+        # works on the dev machine and fails for every real recipient.
+        if "localhost" in self.APP_PUBLIC_URL or "127.0.0.1" in self.APP_PUBLIC_URL:
+            problems.append(
+                "APP_PUBLIC_URL points at localhost — set it to the deployed frontend URL "
+                "(e.g. https://your-app.vercel.app) so transactional emails link correctly"
+            )
         if self.STORAGE_BACKEND == "s3" and not self.S3_BUCKET:
             problems.append("S3_BUCKET is required when STORAGE_BACKEND=s3")
         # Only required when the env-seed admin is actually created. If
